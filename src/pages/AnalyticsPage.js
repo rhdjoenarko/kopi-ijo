@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { startOfMonth, endOfMonth, startOfYear, subMonths, format, parseISO, eachDayOfInterval } from 'date-fns'
+import { startOfMonth, startOfYear, subMonths, format, parseISO } from 'date-fns'
 import { id } from 'date-fns/locale'
 
 function AnalyticsPage() {
@@ -41,10 +41,12 @@ function AnalyticsPage() {
 
     if (data) setOrders(data)
     setLoading(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     fetchOrders(filterType, customStart, customEnd)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterType])
 
   // --- KALKULASI ---
@@ -74,7 +76,6 @@ function AnalyticsPage() {
   })
   const dailyData = Object.entries(dailyMap).sort(([a], [b]) => a.localeCompare(b))
   const maxCups = Math.max(...dailyData.map(([, d]) => d.cups), 1)
-  const maxRevenue = Math.max(...dailyData.map(([, d]) => d.revenue), 1)
 
   // Per menu
   const menuMap = {}

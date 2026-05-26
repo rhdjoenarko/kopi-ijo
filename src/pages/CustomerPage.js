@@ -76,6 +76,7 @@ function CustomerPage() {
 
   useEffect(() => {
     if (step === 'menu') { fetchMenu(); fetchMyOrders() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step])
 
   async function fetchMenu() {
