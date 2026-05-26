@@ -1,0 +1,25 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap');
+
+@font-face {
+  font-family: 'Pluma';
+  src: url('https://haixnqmapezjikgpwjqh.supabase.co/storage/v1/object/public/assets/PlumaBold-Regular.3aea78585e4748855dd382.a779ed2283dd852df247d5f130b0d5dc.woff2') format('woff2');
+  font-weight: 700;
+}
+
+@font-face {
+  font-family: 'Pluma';
+  src: url('https://haixnqmapezjikgpwjqh.supabase.co/storage/v1/object/public/assets/PlumaThin-Regular.a597fc6dd09c339c12d238.7407d6b5ef350daf1f6d0183a9939919.woff2') format('woff2');
+  font-weight: 300;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+}
