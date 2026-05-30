@@ -227,8 +227,10 @@ function AdminPage() {
     if (swapIdx < 0 || swapIdx >= menuItems.length) return
     const a = menuItems[idx]
     const b = menuItems[swapIdx]
-    await supabase.from('menu_items').update({ sort_order: b.sort_order }).eq('id', a.id)
-    await supabase.from('menu_items').update({ sort_order: a.sort_order }).eq('id', b.id)
+    const newSortA = swapIdx
+    const newSortB = idx
+    await supabase.from('menu_items').update({ sort_order: newSortA }).eq('id', a.id)
+    await supabase.from('menu_items').update({ sort_order: newSortB }).eq('id', b.id)
     fetchMenu()
   }
 
