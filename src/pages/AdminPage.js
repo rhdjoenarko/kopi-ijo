@@ -482,35 +482,65 @@ function AdminPage() {
                       </div>
                     </div>
 
-                    {unpaidOrders.length > 0 && (
-                      <div style={{ borderTop: '0.5px solid #d6cfc4', paddingTop: '10px' }}>
-                        {unpaidOrders.map(o => (
-                          <div key={o.id} style={{ marginBottom: '8px' }}>
-                            <div style={{ fontSize: '12px', color: '#888' }}>{formatTimestamp(o.created_at)}</div>
-                            {o.order_items.map(oi => (
-                              <div key={oi.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#2c2c2a' }}>
-                                <span>{oi.quantity}x {oi.menu_item_name}</span>
-                                <span>Rp {(oi.price_at_order * oi.quantity).toLocaleString('id-ID')}</span>
+                    {(() => {
+                      const allOrders = allUnpaidOrders.filter(o => o.customers?.phone === customer.phone)
+                      if (allOrders.length === 0) return null
+                      return (
+                        <div style={{ borderTop: '0.5px solid #d6cfc4', paddingTop: '10px' }}>
+                          {allOrders.map(o => {
+                            const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
+                            const sisaTagihan = Math.max(0, subtotal - (o.credit_used || 0))
+                            const lunasByCredit = !o.paid && sisaTagihan === 0
+                            const statusColor = o.paid ? '#1a3d2b' : lunasByCredit ? '#2d7a4f' : '#e67e22'
+                            const statusLabel = o.paid ? '✓ Lunas' : lunasByCredit ? '✓ Lunas (Credit)' : '⏳ Belum Bayar'
+                            const statusBg = o.paid || lunasByCredit ? '#d4e8d8' : '#fef3e2'
+
+                            return (
+                              <div key={o.id} style={{ marginBottom: '12px', background: '#fff', borderRadius: '8px', padding: '10px', border: `1.5px solid ${statusColor}` }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                  <span style={{ fontSize: '12px', color: '#888' }}>{formatTimestamp(o.created_at)}</span>
+                                  <span style={{ background: statusBg, color: statusColor, padding: '3px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: '500' }}>
+                                    {statusLabel}
+                                  </span>
+                                </div>
+                                {o.order_items.map(oi => (
+                                  <div key={oi.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#2c2c2a', padding: '2px 0' }}>
+                                    <span>{oi.quantity}x {oi.menu_item_name}</span>
+                                    <span>Rp {(oi.price_at_order * oi.quantity).toLocaleString('id-ID')}</span>
+                                  </div>
+                                ))}
+                                <div style={{ borderTop: '0.5px solid #eee', marginTop: '6px', paddingTop: '6px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#5a5248' }}>
+                                    <span>Subtotal</span>
+                                    <span>Rp {subtotal.toLocaleString('id-ID')}</span>
+                                  </div>
+                                  {o.credit_used > 0 && (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#1a3d2b' }}>
+                                      <span>Credit dipakai</span>
+                                      <span>- Rp {o.credit_used.toLocaleString('id-ID')}</span>
+                                    </div>
+                                  )}
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 'bold', color: statusColor, marginTop: '4px' }}>
+                                    <span>Sisa Tagihan</span>
+                                    <span>Rp {sisaTagihan.toLocaleString('id-ID')}</span>
+                                  </div>
+                                </div>
                               </div>
-                            ))}
-                            {o.credit_used > 0 && (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#1a3d2b' }}>
-                                <span>Credit dipakai</span>
-                                <span>- Rp {o.credit_used.toLocaleString('id-ID')}</span>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                        <button style={{ ...st.btnSmall, background: '#2d7a4f', width: '100%', marginTop: '6px' }}
-                          onClick={async () => {
-                            for (const o of unpaidOrders) await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
-                            fetchAllUnpaid()
-                            fetchAllCustomers()
-                          }}>
-                          Tandai Semua Lunas
-                        </button>
-                      </div>
-                    )}
+                            )
+                          })}
+                          {allOrders.some(o => !o.paid && Math.max(0, o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.credit_used || 0)) > 0) && (
+                            <button style={{ ...st.btnSmall, background: '#2d7a4f', width: '100%', marginTop: '6px' }}
+                              onClick={async () => {
+                                for (const o of allOrders) await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
+                                fetchAllUnpaid()
+                                fetchAllCustomers()
+                              }}>
+                              Tandai Semua Lunas
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </div>
                 )
               })}
