@@ -173,9 +173,26 @@ function CustomerPage() {
 
   async function handleOrder() {
     setLoading(true); setError(''); setShowSummary(false)
+    // Hitung total order
+    const orderTotal = cart.reduce((sum, cartItem) => {
+      const itemPrice = cartItem.item.price + Object.values(cartItem.selectedOptions).reduce((s, c) => s + (c?.price_addition || 0), 0)
+      return sum + itemPrice * cartItem.quantity
+    }, 0)
+
+    // Hitung credit yang dipakai
+    const { data: customerData } = await supabase.from('customers').select('credit_balance').eq('id', customer.id).single()
+    const availableCredit = customerData?.credit_balance || 0
+    const creditUsed = Math.min(availableCredit, orderTotal)
+
+    // Kurangi credit customer
+    if (creditUsed > 0) {
+      await supabase.from('customers').update({ credit_balance: availableCredit - creditUsed }).eq('id', customer.id)
+    }
+
     const { data: order, error: orderError } = await supabase.from('orders').insert({ 
       customer_id: customer.id,
-      order_for_date: orderTarget.toLocaleDateString('en-CA')
+      order_for_date: orderTarget.toLocaleDateString('en-CA'),
+      credit_used: creditUsed
     }).select().single()
     if (orderError) { setError('Gagal membuat order.'); setLoading(false); return }
     for (const cartItem of cart) {
@@ -361,15 +378,22 @@ function CustomerPage() {
                 <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Riwayat & Tagihan</h3>
                 {orders.length === 0 && <p style={{ color: '#5a5248' }}>Belum ada order.</p>}
 
-                {orders.some(o => !o.paid) && (
-                  <div style={st.unpaidBox}>
-                    <strong>💳 Total belum dibayar: Rp {
-                      orders.filter(o => !o.paid)
-                        .reduce((sum, o) => sum + o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0), 0)
-                        .toLocaleString('id-ID')
-                    }</strong>
+                <div style={{ ...st.metricCard, marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '13px', color: '#5a5248' }}>Saldo Credit</span>
+                    <strong style={{ color: '#1a3d2b' }}>Rp {(customer?.credit_balance || 0).toLocaleString('id-ID')}</strong>
                   </div>
-                )}
+                  {orders.some(o => !o.paid) && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '13px', color: '#5a5248' }}>Total Belum Dibayar</span>
+                      <strong style={{ color: '#c0392b' }}>Rp {
+                        orders.filter(o => !o.paid)
+                          .reduce((sum, o) => sum + o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0), 0)
+                          .toLocaleString('id-ID')
+                      }</strong>
+                    </div>
+                  )}
+                </div>
 
                 {orders.map(o => {
                   const orderTotal = o.order_items.reduce((sum, oi) => sum + oi.price_at_order * oi.quantity, 0)
@@ -382,9 +406,22 @@ function CustomerPage() {
                           <div style={{ fontSize: '12px', color: '#1a3d2b', fontWeight: '500', marginTop: '2px' }}>
                             Delivery: {formatOrderFor(o.order_for_date, o.created_at, orderCutoff)}
                           </div>
-                          <div style={{ fontSize: '13px', color: '#2c2c2a', marginTop: '4px' }}>
-                            {o.order_items.length} item · <strong style={{ color: '#1a3d2b' }}>Rp {orderTotal.toLocaleString('id-ID')}</strong>
+                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '0.5px solid #d6cfc4' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#2c2c2a' }}>
+                          <span>Subtotal</span>
+                          <span>Rp {orderTotal.toLocaleString('id-ID')}</span>
+                        </div>
+                        {o.credit_used > 0 && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#1a3d2b' }}>
+                            <span>Credit dipakai</span>
+                            <span>- Rp {o.credit_used.toLocaleString('id-ID')}</span>
                           </div>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: o.paid ? '#1a3d2b' : '#c0392b', marginTop: '4px' }}>
+                          <span>Total Tagihan</span>
+                          <span>Rp {(orderTotal - (o.credit_used || 0)).toLocaleString('id-ID')}</span>
+                        </div>
+                      </div>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
                           <span style={{ ...st.badge, background: o.paid ? '#d4e8d8' : '#fef3e2', color: o.paid ? '#1a3d2b' : '#e67e22' }}>
@@ -507,6 +544,7 @@ const st = {
   meta: { color: '#888', fontSize: '12px' },
   overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px', zIndex: 100 },
   popup: { background: '#ede8df', borderRadius: '12px', width: '100%', maxWidth: '440px', maxHeight: '80vh', overflowY: 'auto', overflow: 'hidden' },
+  metricCard: { background: '#f7f3ee', border: '0.5px solid #d6cfc4', borderRadius: '10px', padding: '12px' },
 }
 
 export default CustomerPage

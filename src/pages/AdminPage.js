@@ -27,6 +27,9 @@ function AdminPage() {
   const [historyOrders, setHistoryOrders] = useState([])
   const [historyFilter, setHistoryFilter] = useState('untuk')
   const [allUnpaidOrders, setAllUnpaidOrders] = useState([])
+  const [allCustomers, setAllCustomers] = useState([])
+  const [topUpAmount, setTopUpAmount] = useState({})
+  const [topUpNote, setTopUpNote] = useState({})
   const [workDateLabel, setWorkDateLabel] = useState('')
 
   const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0 })
@@ -70,24 +73,16 @@ function AdminPage() {
       setSettings(map)
       setSettingsForm({ order_cutoff_hour: map.order_cutoff_hour, workorder_cutoff_hour: map.workorder_cutoff_hour })
     }
-
     const now = new Date()
     const hour = now.getHours()
     const deliveryDate = new Date(now)
-
     if (cutoffWork < cutoffOrder) {
-      if (hour >= cutoffOrder) {
-        deliveryDate.setDate(deliveryDate.getDate() + 1)
-      }
+      if (hour >= cutoffOrder) deliveryDate.setDate(deliveryDate.getDate() + 1)
     } else {
-      if (hour >= cutoffWork) {
-        deliveryDate.setDate(deliveryDate.getDate() + 1)
-      }
+      if (hour >= cutoffWork) deliveryDate.setDate(deliveryDate.getDate() + 1)
     }
-
     const deliveryStr = deliveryDate.toLocaleDateString('en-CA')
     setWorkDateLabel(`${DAYS[deliveryDate.getDay()]}, ${deliveryDate.getDate()} ${deliveryDate.toLocaleString('id-ID', { month: 'short' })} ${deliveryDate.getFullYear()}`)
-
     const { data } = await supabase
       .from('orders')
       .select(`*, customers(name, phone), order_items(*, order_item_options(*))`)
@@ -116,16 +111,39 @@ function AdminPage() {
     if (data) setAllUnpaidOrders(data)
   }, [])
 
+  const fetchAllCustomers = useCallback(async () => {
+    const { data } = await supabase.from('customers').select('*').order('name')
+    if (data) setAllCustomers(data)
+  }, [])
+
   useEffect(() => {
     async function init() {
       setLoading(true)
       await fetchWorkOrders()
       await fetchAllUnpaid()
+      await fetchAllCustomers()
       await Promise.all([fetchMenu(), fetchOptionGroups(), fetchDailyTotals()])
       setLoading(false)
     }
     init()
-  }, [fetchWorkOrders, fetchAllUnpaid, fetchMenu, fetchOptionGroups, fetchDailyTotals])
+  }, [fetchWorkOrders, fetchAllUnpaid, fetchAllCustomers, fetchMenu, fetchOptionGroups, fetchDailyTotals])
+
+  async function handleTopUp(customerId, phone) {
+    const amount = parseInt(topUpAmount[phone])
+    if (!amount || amount <= 0) return
+    const customer = allCustomers.find(c => c.id === customerId)
+    const newBalance = (customer?.credit_balance || 0) + amount
+    await supabase.from('customers').update({ credit_balance: newBalance }).eq('id', customerId)
+    await supabase.from('customer_credits').insert({
+      customer_id: customerId,
+      amount,
+      note: topUpNote[phone] || ''
+    })
+    setTopUpAmount(prev => ({ ...prev, [phone]: '' }))
+    setTopUpNote(prev => ({ ...prev, [phone]: '' }))
+    fetchAllCustomers()
+    fetchAllUnpaid()
+  }
 
   function getWorkOrderGroups() {
     const map = {}
@@ -227,10 +245,8 @@ function AdminPage() {
     if (swapIdx < 0 || swapIdx >= menuItems.length) return
     const a = menuItems[idx]
     const b = menuItems[swapIdx]
-    const newSortA = swapIdx
-    const newSortB = idx
-    await supabase.from('menu_items').update({ sort_order: newSortA }).eq('id', a.id)
-    await supabase.from('menu_items').update({ sort_order: newSortB }).eq('id', b.id)
+    await supabase.from('menu_items').update({ sort_order: swapIdx }).eq('id', a.id)
+    await supabase.from('menu_items').update({ sort_order: idx }).eq('id', b.id)
     fetchMenu()
   }
 
@@ -270,18 +286,6 @@ function AdminPage() {
   const overGlobalLimit = globalLimitNum && totalToday > globalLimitNum
   const workGroups = getWorkOrderGroups()
   const historyGroups = getHistoryGroups()
-
-  const getBillingList = () => {
-    const map = {}
-    allUnpaidOrders.forEach(o => {
-      const key = o.customers?.phone
-      if (!map[key]) map[key] = { name: o.customers?.name, phone: key, total: 0, orders: [] }
-      const orderTotal = o.order_items.reduce((sum, oi) => sum + oi.price_at_order * oi.quantity, 0)
-      map[key].total += orderTotal
-      map[key].orders.push(o)
-    })
-    return Object.values(map)
-  }
 
   return (
     <div style={st.container}>
@@ -419,43 +423,77 @@ function AdminPage() {
 
           {tab === 'billing' && (
             <div>
-              <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Tagihan Belum Dibayar</h3>
-              {getBillingList().length === 0 && <p style={{ color: '#5a5248' }}>Semua sudah lunas! 🎉</p>}
-              {getBillingList().map(cs => (
-                <div key={cs.phone} style={st.billingCard}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                    <div>
-                      <strong style={{ color: '#2c2c2a' }}>{cs.name}</strong>
-                      <span style={{ fontSize: '12px', color: '#888', marginLeft: '6px' }}>{cs.phone}</span>
+              <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Tagihan & Credit</h3>
+
+              {allCustomers.map(customer => {
+                const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === customer.phone)
+                const unpaidTotal = unpaidOrders.reduce((sum, o) =>
+                  sum + o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.credit_used || 0), 0)
+
+                return (
+                  <div key={customer.id} style={{ ...st.itemCard, marginBottom: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
+                      <div>
+                        <strong style={{ color: '#2c2c2a' }}>{customer.name}</strong>
+                        <div style={{ fontSize: '12px', color: '#888' }}>{customer.phone}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '12px', color: '#1a3d2b' }}>Credit: <strong>Rp {(customer.credit_balance || 0).toLocaleString('id-ID')}</strong></div>
+                        {unpaidTotal > 0 && <div style={{ fontSize: '12px', color: '#c0392b' }}>Tagihan: <strong>Rp {unpaidTotal.toLocaleString('id-ID')}</strong></div>}
+                        {unpaidTotal <= 0 && <div style={{ fontSize: '12px', color: '#1a3d2b' }}>✓ Lunas</div>}
+                      </div>
                     </div>
-                    <strong style={{ color: '#c0392b' }}>Rp {cs.total.toLocaleString('id-ID')}</strong>
+
+                    <div style={{ borderTop: '0.5px solid #d6cfc4', paddingTop: '10px', marginBottom: '8px' }}>
+                      <div style={{ fontSize: '12px', color: '#5a5248', marginBottom: '6px' }}>Top-up Credit:</div>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <input style={{ ...st.input, marginBottom: 0, flex: 1, minWidth: '80px' }}
+                          type="number" placeholder="Jumlah (Rp)"
+                          value={topUpAmount[customer.phone] || ''}
+                          onChange={e => setTopUpAmount(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
+                        <input style={{ ...st.input, marginBottom: 0, flex: 2, minWidth: '100px' }}
+                          type="text" placeholder="Catatan (opsional)"
+                          value={topUpNote[customer.phone] || ''}
+                          onChange={e => setTopUpNote(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
+                        <button style={{ ...st.btnSmall, background: '#1a3d2b' }}
+                          onClick={() => handleTopUp(customer.id, customer.phone)}>
+                          + Credit
+                        </button>
+                      </div>
+                    </div>
+
+                    {unpaidOrders.length > 0 && (
+                      <div style={{ borderTop: '0.5px solid #d6cfc4', paddingTop: '10px' }}>
+                        {unpaidOrders.map(o => (
+                          <div key={o.id} style={{ marginBottom: '8px' }}>
+                            <div style={{ fontSize: '12px', color: '#888' }}>{formatTimestamp(o.created_at)}</div>
+                            {o.order_items.map(oi => (
+                              <div key={oi.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#2c2c2a' }}>
+                                <span>{oi.quantity}x {oi.menu_item_name}</span>
+                                <span>Rp {(oi.price_at_order * oi.quantity).toLocaleString('id-ID')}</span>
+                              </div>
+                            ))}
+                            {o.credit_used > 0 && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#1a3d2b' }}>
+                                <span>Credit dipakai</span>
+                                <span>- Rp {o.credit_used.toLocaleString('id-ID')}</span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        <button style={{ ...st.btnSmall, background: '#2d7a4f', width: '100%', marginTop: '6px' }}
+                          onClick={async () => {
+                            for (const o of unpaidOrders) await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
+                            fetchAllUnpaid()
+                            fetchAllCustomers()
+                          }}>
+                          Tandai Semua Lunas
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  {cs.orders.map(o => (
-                    <div key={o.id} style={{ marginTop: '8px', paddingTop: '8px', borderTop: '0.5px solid #d6cfc4' }}>
-                      <div style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>
-                        Pesan: {formatTimestamp(o.created_at)}
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#1a3d2b', marginBottom: '4px', fontWeight: '500' }}>
-                        Delivery: {o.order_for_date ? new Date(o.order_for_date + 'T00:00:00').toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
-                      </div>
-                      {o.order_items.map(oi => (
-                        <div key={oi.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#2c2c2a', padding: '2px 0' }}>
-                          <span>{oi.quantity}x {oi.menu_item_name}</span>
-                          <span>Rp {(oi.price_at_order * oi.quantity).toLocaleString('id-ID')}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                  <button style={{ ...st.btn, marginTop: '12px', background: '#2d7a4f' }}
-                    onClick={async () => {
-                      for (const o of cs.orders) await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
-                      fetchWorkOrders()
-                      fetchAllUnpaid()
-                    }}>
-                    Tandai Semua Lunas
-                  </button>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
 
@@ -642,4 +680,4 @@ const st = {
   badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '500' },
 }
 
-export default AdminPage    
+export default AdminPage
