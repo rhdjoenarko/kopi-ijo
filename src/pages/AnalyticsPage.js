@@ -292,6 +292,27 @@ function AnalyticsPage() {
             </>
           )}
 
+          {(() => {
+            const phonesThatOrdered = new Set(orders.map(o => o.customers?.phone))
+            const neverOrdered = customers.filter(c => !phonesThatOrdered.has(c.phone))
+            if (neverOrdered.length === 0) return null
+            return (
+              <>
+                <div style={st.sectionTitle}>Pernah Daftar, Belum Pernah Order</div>
+                <div style={st.tableBox}>
+                  {neverOrdered.map(c => (
+                    <div key={c.id} style={st.tableRow}>
+                      <div style={{ flex: 2 }}>
+                        <div style={{ fontSize: '12px', color: '#2c2c2a', fontWeight: '500' }}>{c.name}</div>
+                        <div style={{ fontSize: '11px', color: '#888' }}>{c.phone}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )
+          })()}
+
           {orders.length === 0 && !loading && (
             <p style={{ color: '#5a5248', textAlign: 'center', marginTop: '32px' }}>Tidak ada data di periode ini.</p>
           )}
