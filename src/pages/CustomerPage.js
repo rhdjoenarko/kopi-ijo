@@ -393,16 +393,20 @@ function CustomerPage() {
                     <span style={{ fontSize: '13px', color: '#5a5248' }}>Saldo Credit</span>
                     <strong style={{ color: '#1a3d2b' }}>Rp {(customer?.credit_balance || 0).toLocaleString('id-ID')}</strong>
                   </div>
-                  {orders.some(o => !o.paid) && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ fontSize: '13px', color: '#5a5248' }}>Total Belum Dibayar</span>
-                      <strong style={{ color: '#c0392b' }}>Rp {
-                        orders.filter(o => !o.paid)
-                          .reduce((sum, o) => sum + o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0), 0)
-                          .toLocaleString('id-ID')
-                      }</strong>
-                    </div>
-                  )}
+                  {(() => {
+                    const totalBelumBayar = orders
+                      .filter(o => !o.paid)
+                      .reduce((sum, o) => {
+                        const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
+                        return sum + Math.max(0, subtotal - (o.credit_used || 0))
+                      }, 0)
+                    return totalBelumBayar > 0 ? (
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: '13px', color: '#5a5248' }}>Total Belum Dibayar</span>
+                        <strong style={{ color: '#c0392b' }}>Rp {totalBelumBayar.toLocaleString('id-ID')}</strong>
+                      </div>
+                    ) : null
+                  })()}
                 </div>
 
                 {orders.map(o => {
@@ -434,9 +438,16 @@ function CustomerPage() {
                       </div>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-                          <span style={{ ...st.badge, background: o.paid ? '#d4e8d8' : '#fef3e2', color: o.paid ? '#1a3d2b' : '#e67e22' }}>
-                            {o.paid ? '✓ Lunas' : '⏳ Belum Bayar'}
-                          </span>
+                          {(() => {
+                            const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
+                            const sisaTagihan = Math.max(0, subtotal - (o.credit_used || 0))
+                            const effectivePaid = o.paid || sisaTagihan === 0
+                            return (
+                              <span style={{ ...st.badge, background: effectivePaid ? '#d4e8d8' : '#fef3e2', color: effectivePaid ? '#1a3d2b' : '#e67e22' }}>
+                                {effectivePaid ? '✓ Lunas' : '⏳ Belum Bayar'}
+                              </span>
+                            )
+                          })()}
                           <span style={{ fontSize: '11px', color: '#888' }}>{isExpanded ? '▲ tutup' : '▼ detail'}</span>
                         </div>
                       </div>
