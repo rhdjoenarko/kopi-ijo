@@ -108,6 +108,13 @@ function CustomerPage() {
       .eq('customer_id', customer.id)
       .order('created_at', { ascending: false })
     if (data) setOrders(data)
+    refreshCustomer()
+  }
+
+  async function refreshCustomer() {
+    if (!customer) return
+    const { data } = await supabase.from('customers').select('*').eq('id', customer.id).single()
+    if (data) setCustomer(data)
   }
 
   async function handlePhoneSubmit() {
@@ -211,7 +218,7 @@ function CustomerPage() {
         }))
       if (optionInserts.length > 0) await supabase.from('order_item_options').insert(optionInserts)
     }
-    setLoading(false); setOrderSuccess(true); setCart([]); fetchMyOrders()
+    setLoading(false); setOrderSuccess(true); setCart([]); fetchMyOrders(); refreshCustomer()
   }
 
   if (orderSuccess) return (
