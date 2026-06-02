@@ -32,7 +32,7 @@ function AdminPage() {
   const [topUpNote, setTopUpNote] = useState({})
   const [workDateLabel, setWorkDateLabel] = useState('')
 
-  const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0 })
+  const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '' })
   const [menuFormGroups, setMenuFormGroups] = useState([])
   const [editingMenu, setEditingMenu] = useState(null)
 
@@ -219,14 +219,14 @@ function AdminPage() {
   }
 
   function resetMenuForm() {
-    setMenuForm({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0 })
+    setMenuForm({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '' })
     setMenuFormGroups([])
     setEditingMenu(null)
   }
 
   function startEditMenu(item) {
     setEditingMenu(item.id)
-    setMenuForm({ name: item.name, price: item.price, daily_limit: item.daily_limit || '', available_days: item.available_days || [0,1,2,3,4,5,6], active: item.active, sort_order: item.sort_order || 0 })
+    setMenuForm({ name: item.name, price: item.price, daily_limit: item.daily_limit || '', available_days: item.available_days || [0,1,2,3,4,5,6], active: item.active, sort_order: item.sort_order || 0, image_url: item.image_url || '' })
     setMenuFormGroups(item.menu_item_option_groups.map(r => r.option_group_id))
     setTab('menu')
   }
@@ -238,7 +238,7 @@ function AdminPage() {
   async function saveMenu() {
     if (!menuForm.name.trim() || !menuForm.price) { setError('Nama dan harga wajib diisi.'); return }
     setError('')
-    const payload = { name: menuForm.name.trim(), price: parseInt(menuForm.price), daily_limit: menuForm.daily_limit ? parseInt(menuForm.daily_limit) : null, available_days: menuForm.available_days, active: menuForm.active, sort_order: parseInt(menuForm.sort_order) || 0 }
+    const payload = { name: menuForm.name.trim(), price: parseInt(menuForm.price), daily_limit: menuForm.daily_limit ? parseInt(menuForm.daily_limit) : null, available_days: menuForm.available_days, active: menuForm.active, sort_order: parseInt(menuForm.sort_order) || 0, image_url: menuForm.image_url || null }
     let menuId = editingMenu
     if (editingMenu) {
       await supabase.from('menu_items').update(payload).eq('id', editingMenu)
@@ -555,6 +555,24 @@ function AdminPage() {
                 <input style={st.input} placeholder="Harga (Rp)" type="number" value={menuForm.price} onChange={e => setMenuForm(f => ({ ...f, price: e.target.value }))} />
                 <input style={st.input} placeholder="Limit per hari (kosongkan = tidak ada limit)" type="number" value={menuForm.daily_limit} onChange={e => setMenuForm(f => ({ ...f, daily_limit: e.target.value }))} />
                 <input style={st.input} placeholder="Urutan tampil (angka kecil = duluan)" type="number" value={menuForm.sort_order} onChange={e => setMenuForm(f => ({ ...f, sort_order: e.target.value }))} />
+                <label style={st.label}>Foto menu (opsional):</label>
+                {menuForm.image_url && (
+                  <div style={{ marginBottom: '10px' }}>
+                    <img src={menuForm.image_url} alt="preview" style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', borderRadius: '8px' }} />
+                    <button style={{ ...st.btnOutline, marginTop: '6px', fontSize: '12px', padding: '6px' }} onClick={() => setMenuForm(f => ({ ...f, image_url: '' }))}>Hapus Foto</button>
+                  </div>
+                )}
+                <input style={{ ...st.input, padding: '6px' }} type="file" accept="image/*"
+                  onChange={async (e) => {
+                    const file = e.target.files[0]
+                    if (!file) return
+                    const ext = file.name.split('.').pop()
+                    const fileName = `menu-${Date.now()}.${ext}`
+                    const { error } = await supabase.storage.from('menu-images').upload(fileName, file, { upsert: true })
+                    if (error) { setError('Gagal upload foto.'); return }
+                    const { data: urlData } = supabase.storage.from('menu-images').getPublicUrl(fileName)
+                    setMenuForm(f => ({ ...f, image_url: urlData.publicUrl }))
+                  }} />
                 <label style={st.label}>Tersedia hari:</label>
                 <div style={st.dayRow}>
                   {DAYS.map((d, i) => (

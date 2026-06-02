@@ -303,14 +303,30 @@ function CustomerPage() {
                 {menuItems.map(item => {
                   const isSoldOut = item.daily_limit !== null && item.soldToday >= item.daily_limit
                   return (
-                    <div key={item.id} style={{ ...st.menuItem, opacity: isSoldOut ? 0.5 : 1 }}>
-                      <div style={st.menuRow}>
+                    <div key={item.id} style={{ ...st.menuItem, opacity: isSoldOut ? 0.5 : 1, padding: 0, overflow: 'hidden' }}>
+                      {item.image_url && (
+                        <div style={{ position: 'relative' }}>
+                          <img src={item.image_url} alt={item.name}
+                            style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', display: 'block' }} />
+                          {item.daily_limit && !isSoldOut && (
+                            <span style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(0,0,0,0.45)', color: '#fff', fontSize: '11px', padding: '3px 8px', borderRadius: '20px' }}>
+                              Sisa {item.daily_limit - item.soldToday}
+                            </span>
+                          )}
+                          {isSoldOut && (
+                            <span style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(192,57,43,0.85)', color: '#fff', fontSize: '11px', padding: '3px 8px', borderRadius: '20px' }}>
+                              Habis
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <div style={{ ...st.menuRow, padding: '12px' }}>
                         <div>
                           <strong style={{ color: '#2c2c2a' }}>{item.name}</strong>
                           <div style={{ fontSize: '12px', color: '#1a3d2b', marginTop: '2px' }}>
                             Rp {item.price.toLocaleString('id-ID')}
-                            {isSoldOut && <span style={{ color: '#c0392b', marginLeft: '6px' }}>· Habis</span>}
-                            {item.daily_limit && !isSoldOut && <span style={{ color: '#888', marginLeft: '6px' }}>· Sisa {item.daily_limit - item.soldToday}</span>}
+                            {!item.image_url && isSoldOut && <span style={{ color: '#c0392b', marginLeft: '6px' }}>· Habis</span>}
+                            {!item.image_url && item.daily_limit && !isSoldOut && <span style={{ color: '#888', marginLeft: '6px' }}>· Sisa {item.daily_limit - item.soldToday}</span>}
                           </div>
                         </div>
                         <button style={{ ...st.addBtn, ...(isSoldOut ? st.addBtnDisabled : {}) }}
