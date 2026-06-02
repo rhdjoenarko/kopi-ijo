@@ -150,7 +150,10 @@ function CustomerPage() {
   }
 
   function updateQuantity(cartId, delta) {
-    setCart(prev => prev.map(c => c.cartId === cartId ? { ...c, quantity: Math.max(1, c.quantity + delta) } : c))
+    setCart(prev => prev
+      .map(c => c.cartId === cartId ? { ...c, quantity: c.quantity + delta } : c)
+      .filter(c => c.quantity > 0)
+    )
   }
 
   const getItemPrice = (cartItem) => {
