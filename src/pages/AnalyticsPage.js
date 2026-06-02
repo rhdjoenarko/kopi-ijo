@@ -35,7 +35,7 @@ function AnalyticsPage() {
 
     const { data } = await supabase
       .from('orders')
-      .select(`*, customers(name, phone, credit_balance), order_items(*, order_item_options(*))`)
+      .select(`*, customers(name, phone), order_items(*, order_item_options(*))`)
       .gte('created_at', `${range.start}T00:00:00`)
       .lte('created_at', `${range.end}T23:59:59`)
       .order('created_at', { ascending: true })
@@ -54,21 +54,15 @@ function AnalyticsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterType])
 
-  // --- KALKULASI ---
-
-  const totalRevenuePotential = orders.reduce((sum, o) =>
-    sum + o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0), 0)
-
   const totalRevenuePaid = orders.filter(o => o.paid).reduce((sum, o) =>
     sum + o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0), 0)
-
-  const totalCreditUsed = orders.reduce((sum, o) => sum + (o.credit_used || 0), 0)
 
   const totalCups = orders.reduce((sum, o) =>
     sum + o.order_items.reduce((s, oi) => s + oi.quantity, 0), 0)
 
   const totalOrders = orders.length
-  const totalUnpaid = orders
+
+  const totalOutstanding = orders
     .filter(o => !o.paid)
     .reduce((sum, o) => {
       const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
@@ -77,21 +71,18 @@ function AnalyticsPage() {
 
   const totalCreditBeredar = customers.reduce((sum, c) => sum + (c.credit_balance || 0), 0)
 
-  // Tren harian
   const dailyMap = {}
   orders.forEach(o => {
     const date = o.created_at.split('T')[0]
-    if (!dailyMap[date]) dailyMap[date] = { cups: 0, revenue: 0, paid: 0 }
+    if (!dailyMap[date]) dailyMap[date] = { cups: 0, revenue: 0 }
     o.order_items.forEach(oi => {
       dailyMap[date].cups += oi.quantity
       dailyMap[date].revenue += oi.price_at_order * oi.quantity
-      if (o.paid) dailyMap[date].paid += oi.price_at_order * oi.quantity
     })
   })
   const dailyData = Object.entries(dailyMap).sort(([a], [b]) => a.localeCompare(b))
   const maxCups = Math.max(...dailyData.map(([, d]) => d.cups), 1)
 
-  // Per menu
   const menuMap = {}
   orders.forEach(o => {
     o.order_items.forEach(oi => {
@@ -103,32 +94,16 @@ function AnalyticsPage() {
   const menuData = Object.entries(menuMap).sort(([, a], [, b]) => b.cups - a.cups)
   const maxMenuCups = Math.max(...menuData.map(([, d]) => d.cups), 1)
 
-  // Per customer
   const customerMap = {}
   orders.forEach(o => {
     const key = o.customers?.phone
     if (!key) return
-    if (!customerMap[key]) customerMap[key] = {
-      name: o.customers?.name,
-      phone: key,
-      cups: 0,
-      revenue: 0,
-      frequency: 0,
-      creditUsed: 0
-    }
+    if (!customerMap[key]) customerMap[key] = { name: o.customers?.name, phone: key, cups: 0, revenue: 0, frequency: 0 }
     customerMap[key].frequency += 1
-    customerMap[key].creditUsed += (o.credit_used || 0)
     o.order_items.forEach(oi => {
       customerMap[key].cups += oi.quantity
       customerMap[key].revenue += oi.price_at_order * oi.quantity
     })
-  })
-
-  // Tambahkan credit_balance dari customers
-  customers.forEach(c => {
-    if (customerMap[c.phone]) {
-      customerMap[c.phone].creditBalance = c.credit_balance || 0
-    }
   })
 
   const customerData = Object.values(customerMap).sort((a, b) => {
@@ -141,11 +116,8 @@ function AnalyticsPage() {
   ), 1)
 
   const filterLabel = {
-    all_time: 'All Time',
-    this_year: 'Tahun Ini',
-    last_3_months: '3 Bulan Terakhir',
-    this_month: 'Bulan Ini',
-    custom: 'Custom'
+    all_time: 'All Time', this_year: 'Tahun Ini',
+    last_3_months: '3 Bulan Terakhir', this_month: 'Bulan Ini', custom: 'Custom'
   }
 
   return (
@@ -171,16 +143,11 @@ function AnalyticsPage() {
               </button>
             ))}
           </div>
-
           {filterType === 'custom' && (
             <div style={{ display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
-              <input style={{ ...st.input, flex: 1 }} type="date" value={customStart}
-                onChange={e => setCustomStart(e.target.value)} />
-              <input style={{ ...st.input, flex: 1 }} type="date" value={customEnd}
-                onChange={e => setCustomEnd(e.target.value)} />
-              <button style={st.btnSmall} onClick={() => fetchOrders('custom', customStart, customEnd)}>
-                Tampilkan
-              </button>
+              <input style={{ ...st.input, flex: 1 }} type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} />
+              <input style={{ ...st.input, flex: 1 }} type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} />
+              <button style={st.btnSmall} onClick={() => fetchOrders('custom', customStart, customEnd)}>Tampilkan</button>
             </div>
           )}
         </div>
@@ -189,7 +156,6 @@ function AnalyticsPage() {
 
         <div style={{ padding: '0 16px 24px' }}>
 
-          {/* OVERVIEW */}
           <div style={st.sectionTitle}>Overview</div>
           <div style={st.grid2}>
             <div style={st.metricCard}>
@@ -201,37 +167,27 @@ function AnalyticsPage() {
               <div style={st.metricValue}>{totalOrders}</div>
             </div>
             <div style={st.metricCard}>
-              <div style={st.metricLabel}>Revenue Lunas (Cash)</div>
-              <div style={{ ...st.metricValue, color: '#1a3d2b', fontSize: '15px' }}>Rp {(totalRevenuePaid - totalCreditUsed).toLocaleString('id-ID')}</div>
-            </div>
-            <div style={st.metricCard}>
-              <div style={st.metricLabel}>Revenue Lunas (Total)</div>
+              <div style={st.metricLabel}>Revenue Diterima</div>
               <div style={{ ...st.metricValue, color: '#1a3d2b', fontSize: '15px' }}>Rp {totalRevenuePaid.toLocaleString('id-ID')}</div>
             </div>
             <div style={st.metricCard}>
-              <div style={st.metricLabel}>Potensi Revenue</div>
-              <div style={{ ...st.metricValue, color: '#5a5248', fontSize: '15px' }}>Rp {totalRevenuePotential.toLocaleString('id-ID')}</div>
-            </div>
-            <div style={st.metricCard}>
               <div style={st.metricLabel}>Outstanding Tagihan</div>
-              <div style={{ ...st.metricValue, color: totalUnpaid > 0 ? '#c0392b' : '#1a3d2b', fontSize: '15px' }}>Rp {totalUnpaid.toLocaleString('id-ID')}</div>
+              <div style={{ ...st.metricValue, color: totalOutstanding > 0 ? '#c0392b' : '#1a3d2b', fontSize: '15px' }}>
+                Rp {totalOutstanding.toLocaleString('id-ID')}
+              </div>
             </div>
           </div>
 
-          {/* CREDIT OVERVIEW */}
-          <div style={st.sectionTitle}>Credit</div>
-          <div style={st.grid2}>
-            <div style={st.metricCard}>
-              <div style={st.metricLabel}>Total Credit Terpakai</div>
-              <div style={{ ...st.metricValue, color: '#1a3d2b', fontSize: '15px' }}>Rp {totalCreditUsed.toLocaleString('id-ID')}</div>
+          {totalCreditBeredar > 0 && (
+            <div style={{ background: '#fef3e2', border: '1px solid #e67e22', borderRadius: '10px', padding: '12px 14px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: '12px', color: '#7d3c00', fontWeight: '500' }}>💳 Credit Belum Dipakai Customer</div>
+                <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>Ini "hutang" kamu ke customer</div>
+              </div>
+              <strong style={{ color: '#e67e22', fontSize: '15px' }}>Rp {totalCreditBeredar.toLocaleString('id-ID')}</strong>
             </div>
-            <div style={st.metricCard}>
-              <div style={st.metricLabel}>Credit Beredar (Saldo)</div>
-              <div style={{ ...st.metricValue, color: '#e67e22', fontSize: '15px' }}>Rp {totalCreditBeredar.toLocaleString('id-ID')}</div>
-            </div>
-          </div>
+          )}
 
-          {/* TREN HARIAN */}
           {dailyData.length > 0 && (
             <>
               <div style={st.sectionTitle}>Tren Harian</div>
@@ -263,7 +219,6 @@ function AnalyticsPage() {
             </>
           )}
 
-          {/* PER MENU */}
           {menuData.length > 0 && (
             <>
               <div style={st.sectionTitle}>Menu Terlaris</div>
@@ -293,7 +248,6 @@ function AnalyticsPage() {
             </>
           )}
 
-          {/* CUSTOMER */}
           {customerData.length > 0 && (
             <>
               <div style={st.sectionTitle}>Customer</div>
@@ -311,8 +265,6 @@ function AnalyticsPage() {
                   <span style={{ flex: 1, textAlign: 'right' }}>
                     {loyaltyBy === 'spending' ? 'Spending' : loyaltyBy === 'cup' ? 'Cup' : 'Order'}
                   </span>
-                  <span style={{ flex: 1, textAlign: 'right' }}>Credit</span>
-                  <span style={{ flex: 1, textAlign: 'right' }}>Saldo</span>
                 </div>
                 {customerData.map(c => {
                   const val = loyaltyBy === 'spending' ? c.revenue : loyaltyBy === 'cup' ? c.cups : c.frequency
@@ -327,12 +279,6 @@ function AnalyticsPage() {
                         <span style={{ flex: 1, textAlign: 'right', fontSize: '12px', color: '#1a3d2b', fontWeight: '500' }}>
                           {valLabel}
                         </span>
-                        <span style={{ flex: 1, textAlign: 'right', fontSize: '12px', color: '#2d7a4f' }}>
-                          {c.creditUsed > 0 ? `Rp ${c.creditUsed.toLocaleString('id-ID')}` : '—'}
-                        </span>
-                        <span style={{ flex: 1, textAlign: 'right', fontSize: '12px', color: c.creditBalance > 0 ? '#e67e22' : '#888' }}>
-                          {c.creditBalance > 0 ? `Rp ${c.creditBalance.toLocaleString('id-ID')}` : '—'}
-                        </span>
                       </div>
                       <div style={{ padding: '0 12px 6px' }}>
                         <div style={st.barBg}>
@@ -343,30 +289,6 @@ function AnalyticsPage() {
                   )
                 })}
               </div>
-
-              {/* Credit beredar per customer */}
-              {customers.some(c => c.credit_balance > 0) && (
-                <>
-                  <div style={st.sectionTitle}>Saldo Credit per Customer</div>
-                  <div style={st.tableBox}>
-                    <div style={st.tableHeader}>
-                      <span style={{ flex: 2 }}>Customer</span>
-                      <span style={{ flex: 1, textAlign: 'right' }}>Saldo</span>
-                    </div>
-                    {customers.filter(c => c.credit_balance > 0).map(c => (
-                      <div key={c.id} style={st.tableRow}>
-                        <div style={{ flex: 2 }}>
-                          <div style={{ fontSize: '12px', color: '#2c2c2a', fontWeight: '500' }}>{c.name}</div>
-                          <div style={{ fontSize: '11px', color: '#888' }}>{c.phone}</div>
-                        </div>
-                        <span style={{ flex: 1, textAlign: 'right', fontSize: '12px', color: '#e67e22', fontWeight: '500' }}>
-                          Rp {c.credit_balance.toLocaleString('id-ID')}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
             </>
           )}
 
