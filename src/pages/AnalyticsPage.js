@@ -5,6 +5,7 @@ import { id } from 'date-fns/locale'
 
 function AnalyticsPage() {
   const [orders, setOrders] = useState([])
+  const [customers, setCustomers] = useState([])
   const [loading, setLoading] = useState(false)
   const [filterType, setFilterType] = useState('this_month')
   const [customStart, setCustomStart] = useState('')
@@ -34,12 +35,16 @@ function AnalyticsPage() {
 
     const { data } = await supabase
       .from('orders')
-      .select(`*, customers(name, phone), order_items(*, order_item_options(*))`)
+      .select(`*, customers(name, phone, credit_balance), order_items(*, order_item_options(*))`)
       .gte('created_at', `${range.start}T00:00:00`)
       .lte('created_at', `${range.end}T23:59:59`)
       .order('created_at', { ascending: true })
 
     if (data) setOrders(data)
+
+    const { data: custData } = await supabase.from('customers').select('*').order('name')
+    if (custData) setCustomers(custData)
+
     setLoading(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -57,11 +62,20 @@ function AnalyticsPage() {
   const totalRevenuePaid = orders.filter(o => o.paid).reduce((sum, o) =>
     sum + o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0), 0)
 
+  const totalCreditUsed = orders.reduce((sum, o) => sum + (o.credit_used || 0), 0)
+
   const totalCups = orders.reduce((sum, o) =>
     sum + o.order_items.reduce((s, oi) => s + oi.quantity, 0), 0)
 
   const totalOrders = orders.length
-  const totalUnpaid = totalRevenuePotential - totalRevenuePaid
+  const totalUnpaid = orders
+    .filter(o => !o.paid)
+    .reduce((sum, o) => {
+      const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
+      return sum + Math.max(0, subtotal - (o.credit_used || 0))
+    }, 0)
+
+  const totalCreditBeredar = customers.reduce((sum, c) => sum + (c.credit_balance || 0), 0)
 
   // Tren harian
   const dailyMap = {}
@@ -81,10 +95,9 @@ function AnalyticsPage() {
   const menuMap = {}
   orders.forEach(o => {
     o.order_items.forEach(oi => {
-      if (!menuMap[oi.menu_item_name]) menuMap[oi.menu_item_name] = { cups: 0, revenue: 0, paid: 0 }
+      if (!menuMap[oi.menu_item_name]) menuMap[oi.menu_item_name] = { cups: 0, revenue: 0 }
       menuMap[oi.menu_item_name].cups += oi.quantity
       menuMap[oi.menu_item_name].revenue += oi.price_at_order * oi.quantity
-      if (o.paid) menuMap[oi.menu_item_name].paid += oi.price_at_order * oi.quantity
     })
   })
   const menuData = Object.entries(menuMap).sort(([, a], [, b]) => b.cups - a.cups)
@@ -95,12 +108,27 @@ function AnalyticsPage() {
   orders.forEach(o => {
     const key = o.customers?.phone
     if (!key) return
-    if (!customerMap[key]) customerMap[key] = { name: o.customers?.name, phone: key, cups: 0, revenue: 0, frequency: 0 }
+    if (!customerMap[key]) customerMap[key] = {
+      name: o.customers?.name,
+      phone: key,
+      cups: 0,
+      revenue: 0,
+      frequency: 0,
+      creditUsed: 0
+    }
     customerMap[key].frequency += 1
+    customerMap[key].creditUsed += (o.credit_used || 0)
     o.order_items.forEach(oi => {
       customerMap[key].cups += oi.quantity
       customerMap[key].revenue += oi.price_at_order * oi.quantity
     })
+  })
+
+  // Tambahkan credit_balance dari customers
+  customers.forEach(c => {
+    if (customerMap[c.phone]) {
+      customerMap[c.phone].creditBalance = c.credit_balance || 0
+    }
   })
 
   const customerData = Object.values(customerMap).sort((a, b) => {
@@ -108,7 +136,9 @@ function AnalyticsPage() {
     if (loyaltyBy === 'cup') return b.cups - a.cups
     return b.frequency - a.frequency
   })
-  const maxCustomer = Math.max(...customerData.map(c => loyaltyBy === 'spending' ? c.revenue : loyaltyBy === 'cup' ? c.cups : c.frequency), 1)
+  const maxCustomer = Math.max(...customerData.map(c =>
+    loyaltyBy === 'spending' ? c.revenue : loyaltyBy === 'cup' ? c.cups : c.frequency
+  ), 1)
 
   const filterLabel = {
     all_time: 'All Time',
@@ -132,7 +162,6 @@ function AnalyticsPage() {
           <div style={st.greetingMsg}>Pantau performa penjualan Kopi Ijø.</div>
         </div>
 
-        {/* FILTER */}
         <div style={{ padding: '12px 16px 0' }}>
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
             {['this_month', 'last_3_months', 'this_year', 'all_time', 'custom'].map(f => (
@@ -172,20 +201,35 @@ function AnalyticsPage() {
               <div style={st.metricValue}>{totalOrders}</div>
             </div>
             <div style={st.metricCard}>
-              <div style={st.metricLabel}>Revenue (Lunas)</div>
-              <div style={{ ...st.metricValue, color: '#1a3d2b' }}>Rp {totalRevenuePaid.toLocaleString('id-ID')}</div>
+              <div style={st.metricLabel}>Revenue Lunas (Cash)</div>
+              <div style={{ ...st.metricValue, color: '#1a3d2b', fontSize: '15px' }}>Rp {(totalRevenuePaid - totalCreditUsed).toLocaleString('id-ID')}</div>
             </div>
             <div style={st.metricCard}>
-              <div style={st.metricLabel}>Revenue (Potensi)</div>
-              <div style={{ ...st.metricValue, color: '#5a5248' }}>Rp {totalRevenuePotential.toLocaleString('id-ID')}</div>
+              <div style={st.metricLabel}>Revenue Lunas (Total)</div>
+              <div style={{ ...st.metricValue, color: '#1a3d2b', fontSize: '15px' }}>Rp {totalRevenuePaid.toLocaleString('id-ID')}</div>
+            </div>
+            <div style={st.metricCard}>
+              <div style={st.metricLabel}>Potensi Revenue</div>
+              <div style={{ ...st.metricValue, color: '#5a5248', fontSize: '15px' }}>Rp {totalRevenuePotential.toLocaleString('id-ID')}</div>
+            </div>
+            <div style={st.metricCard}>
+              <div style={st.metricLabel}>Outstanding Tagihan</div>
+              <div style={{ ...st.metricValue, color: totalUnpaid > 0 ? '#c0392b' : '#1a3d2b', fontSize: '15px' }}>Rp {totalUnpaid.toLocaleString('id-ID')}</div>
             </div>
           </div>
 
-          {totalUnpaid > 0 && (
-            <div style={st.unpaidBox}>
-              ⚠️ Outstanding belum dibayar: <strong>Rp {totalUnpaid.toLocaleString('id-ID')}</strong>
+          {/* CREDIT OVERVIEW */}
+          <div style={st.sectionTitle}>Credit</div>
+          <div style={st.grid2}>
+            <div style={st.metricCard}>
+              <div style={st.metricLabel}>Total Credit Terpakai</div>
+              <div style={{ ...st.metricValue, color: '#1a3d2b', fontSize: '15px' }}>Rp {totalCreditUsed.toLocaleString('id-ID')}</div>
             </div>
-          )}
+            <div style={st.metricCard}>
+              <div style={st.metricLabel}>Credit Beredar (Saldo)</div>
+              <div style={{ ...st.metricValue, color: '#e67e22', fontSize: '15px' }}>Rp {totalCreditBeredar.toLocaleString('id-ID')}</div>
+            </div>
+          </div>
 
           {/* TREN HARIAN */}
           {dailyData.length > 0 && (
@@ -249,7 +293,7 @@ function AnalyticsPage() {
             </>
           )}
 
-          {/* CUSTOMER LOYALTY */}
+          {/* CUSTOMER */}
           {customerData.length > 0 && (
             <>
               <div style={st.sectionTitle}>Customer</div>
@@ -265,8 +309,10 @@ function AnalyticsPage() {
                 <div style={st.tableHeader}>
                   <span style={{ flex: 2 }}>Customer</span>
                   <span style={{ flex: 1, textAlign: 'right' }}>
-                    {loyaltyBy === 'spending' ? 'Total' : loyaltyBy === 'cup' ? 'Cup' : 'Order'}
+                    {loyaltyBy === 'spending' ? 'Spending' : loyaltyBy === 'cup' ? 'Cup' : 'Order'}
                   </span>
+                  <span style={{ flex: 1, textAlign: 'right' }}>Credit</span>
+                  <span style={{ flex: 1, textAlign: 'right' }}>Saldo</span>
                 </div>
                 {customerData.map(c => {
                   const val = loyaltyBy === 'spending' ? c.revenue : loyaltyBy === 'cup' ? c.cups : c.frequency
@@ -281,6 +327,12 @@ function AnalyticsPage() {
                         <span style={{ flex: 1, textAlign: 'right', fontSize: '12px', color: '#1a3d2b', fontWeight: '500' }}>
                           {valLabel}
                         </span>
+                        <span style={{ flex: 1, textAlign: 'right', fontSize: '12px', color: '#2d7a4f' }}>
+                          {c.creditUsed > 0 ? `Rp ${c.creditUsed.toLocaleString('id-ID')}` : '—'}
+                        </span>
+                        <span style={{ flex: 1, textAlign: 'right', fontSize: '12px', color: c.creditBalance > 0 ? '#e67e22' : '#888' }}>
+                          {c.creditBalance > 0 ? `Rp ${c.creditBalance.toLocaleString('id-ID')}` : '—'}
+                        </span>
                       </div>
                       <div style={{ padding: '0 12px 6px' }}>
                         <div style={st.barBg}>
@@ -291,6 +343,30 @@ function AnalyticsPage() {
                   )
                 })}
               </div>
+
+              {/* Credit beredar per customer */}
+              {customers.some(c => c.credit_balance > 0) && (
+                <>
+                  <div style={st.sectionTitle}>Saldo Credit per Customer</div>
+                  <div style={st.tableBox}>
+                    <div style={st.tableHeader}>
+                      <span style={{ flex: 2 }}>Customer</span>
+                      <span style={{ flex: 1, textAlign: 'right' }}>Saldo</span>
+                    </div>
+                    {customers.filter(c => c.credit_balance > 0).map(c => (
+                      <div key={c.id} style={st.tableRow}>
+                        <div style={{ flex: 2 }}>
+                          <div style={{ fontSize: '12px', color: '#2c2c2a', fontWeight: '500' }}>{c.name}</div>
+                          <div style={{ fontSize: '11px', color: '#888' }}>{c.phone}</div>
+                        </div>
+                        <span style={{ flex: 1, textAlign: 'right', fontSize: '12px', color: '#e67e22', fontWeight: '500' }}>
+                          Rp {c.credit_balance.toLocaleString('id-ID')}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </>
           )}
 
@@ -320,7 +396,6 @@ const st = {
   metricCard: { background: '#f7f3ee', border: '0.5px solid #d6cfc4', borderRadius: '10px', padding: '12px' },
   metricLabel: { fontSize: '11px', color: '#888', marginBottom: '4px' },
   metricValue: { fontSize: '18px', fontWeight: '500', color: '#2c2c2a' },
-  unpaidBox: { background: '#fef3e2', border: '1px solid #e67e22', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#7d3c00', marginBottom: '8px' },
   tableBox: { background: '#f7f3ee', border: '0.5px solid #d6cfc4', borderRadius: '10px', overflow: 'hidden', marginBottom: '8px' },
   tableHeader: { display: 'flex', padding: '8px 12px', background: '#e4ddd2', fontSize: '11px', color: '#888', fontWeight: '500' },
   tableRow: { display: 'flex', padding: '8px 12px 4px', alignItems: 'center' },
