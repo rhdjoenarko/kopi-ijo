@@ -131,14 +131,35 @@ function AdminPage() {
   async function handleTopUp(customerId, phone) {
     const amount = parseInt(topUpAmount[phone])
     if (!amount || amount <= 0) return
+
     const customer = allCustomers.find(c => c.id === customerId)
-    const newBalance = (customer?.credit_balance || 0) + amount
-    await supabase.from('customers').update({ credit_balance: newBalance }).eq('id', customerId)
+    let remainingCredit = (customer?.credit_balance || 0) + amount
+
+    // Catat top-up
     await supabase.from('customer_credits').insert({
       customer_id: customerId,
       amount,
       note: topUpNote[phone] || ''
     })
+
+    // Lunasi outstanding orders pakai credit
+    const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === phone)
+    for (const o of unpaidOrders) {
+      const orderBill = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.credit_used || 0)
+      if (orderBill <= 0) continue
+      if (remainingCredit >= orderBill) {
+        remainingCredit -= orderBill
+        await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
+      } else if (remainingCredit > 0) {
+        // Credit tidak cukup untuk lunasi satu order penuh — tambah credit_used saja
+        await supabase.from('orders').update({ credit_used: (o.credit_used || 0) + remainingCredit }).eq('id', o.id)
+        remainingCredit = 0
+      }
+    }
+
+    // Update saldo credit
+    await supabase.from('customers').update({ credit_balance: remainingCredit }).eq('id', customerId)
+
     setTopUpAmount(prev => ({ ...prev, [phone]: '' }))
     setTopUpNote(prev => ({ ...prev, [phone]: '' }))
     fetchAllCustomers()
