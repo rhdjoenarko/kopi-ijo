@@ -30,6 +30,9 @@ function AdminPage() {
   const [allCustomers, setAllCustomers] = useState([])
   const [topUpAmount, setTopUpAmount] = useState({})
   const [topUpNote, setTopUpNote] = useState({})
+  const [manualBillAmount, setManualBillAmount] = useState({})
+  const [manualBillNote, setManualBillNote] = useState({})
+  const [manualBillUseCredit, setManualBillUseCredit] = useState({})
   const [workDateLabel, setWorkDateLabel] = useState('')
 
   const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '' })
@@ -161,6 +164,46 @@ function AdminPage() {
 
     setTopUpAmount(prev => ({ ...prev, [phone]: '' }))
     setTopUpNote(prev => ({ ...prev, [phone]: '' }))
+    fetchAllCustomers()
+    fetchAllUnpaid()
+  }
+
+  async function handleManualBill(customerId, phone) {
+    const amount = parseInt(manualBillAmount[phone])
+    if (!amount || amount <= 0) return
+    const note = manualBillNote[phone] || 'Tagihan manual'
+    const useCredit = manualBillUseCredit[phone] ?? true
+
+    const customer = allCustomers.find(c => c.id === customerId)
+    let creditUsed = 0
+
+    if (useCredit && (customer?.credit_balance || 0) > 0) {
+      creditUsed = Math.min(customer.credit_balance, amount)
+      await supabase.from('customers').update({ credit_balance: customer.credit_balance - creditUsed }).eq('id', customerId)
+    }
+
+    const isPaid = creditUsed >= amount
+
+    const { data: order } = await supabase.from('orders').insert({
+      customer_id: customerId,
+      order_for_date: new Date().toLocaleDateString('en-CA'),
+      credit_used: creditUsed,
+      paid: isPaid,
+      paid_at: isPaid ? new Date().toISOString() : null
+    }).select().single()
+
+    if (order) {
+      await supabase.from('order_items').insert({
+        order_id: order.id,
+        menu_item_id: null,
+        menu_item_name: note,
+        price_at_order: amount,
+        quantity: 1
+      })
+    }
+
+    setManualBillAmount(prev => ({ ...prev, [phone]: '' }))
+    setManualBillNote(prev => ({ ...prev, [phone]: '' }))
     fetchAllCustomers()
     fetchAllUnpaid()
   }
@@ -483,6 +526,30 @@ function AdminPage() {
                           + Credit
                         </button>
                       </div>
+                    </div>
+
+                    <div style={{ borderTop: '0.5px solid #d6cfc4', paddingTop: '10px', marginBottom: '8px' }}>
+                      <div style={{ fontSize: '12px', color: '#5a5248', marginBottom: '6px' }}>Tagihan Manual:</div>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <input style={{ ...st.input, marginBottom: 0, flex: 1, minWidth: '80px' }}
+                          type="number" placeholder="Jumlah (Rp)"
+                          value={manualBillAmount[customer.phone] || ''}
+                          onChange={e => setManualBillAmount(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
+                        <input style={{ ...st.input, marginBottom: 0, flex: 2, minWidth: '100px' }}
+                          type="text" placeholder="Keterangan"
+                          value={manualBillNote[customer.phone] || ''}
+                          onChange={e => setManualBillNote(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
+                      </div>
+                      <label style={{ ...st.checkRow, marginTop: '8px', fontSize: '12px' }}>
+                        <input type="checkbox"
+                          checked={manualBillUseCredit[customer.phone] ?? true}
+                          onChange={e => setManualBillUseCredit(prev => ({ ...prev, [customer.phone]: e.target.checked }))} />
+                        Potong credit otomatis
+                      </label>
+                      <button style={{ ...st.btnSmall, background: '#c0392b', marginTop: '4px' }}
+                        onClick={() => handleManualBill(customer.id, customer.phone)}>
+                        + Tagihan
+                      </button>
                     </div>
 
                     {(() => {
