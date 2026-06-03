@@ -170,14 +170,17 @@ function AdminPage() {
     orders.forEach(o => {
       o.order_items.forEach(oi => {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
-        map[oi.menu_item_name].push({
-          customerName: o.customers?.name,
-          customerPhone: o.customers?.phone,
-          quantity: oi.quantity,
-          options: oi.order_item_options,
-          paid: o.paid,
-          orderId: o.id
-        })
+        const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
+          const effectivePaid = o.paid || (o.credit_used || 0) >= subtotal
+          map[oi.menu_item_name].push({
+            customerName: o.customers?.name,
+            customerPhone: o.customers?.phone,
+            quantity: oi.quantity,
+            options: oi.order_item_options,
+            paid: o.paid,
+            effectivePaid,
+            orderId: o.id
+          })
       })
     })
     return map
@@ -378,9 +381,9 @@ function AdminPage() {
                             </div>
                           )}
                         </div>
-                        <button style={{ ...st.btnSmall, background: entry.paid ? '#2d7a4f' : '#e67e22', minWidth: '100px' }}
+                        <button style={{ ...st.btnSmall, background: entry.effectivePaid ? '#2d7a4f' : '#e67e22', minWidth: '100px' }}
                           onClick={() => togglePaid(entry.orderId, entry.paid)}>
-                          {entry.paid ? '✓ Lunas' : 'Belum Bayar'}
+                          {entry.effectivePaid ? '✓ Lunas' : 'Belum Bayar'}
                         </button>
                       </div>
                     </div>
