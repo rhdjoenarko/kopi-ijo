@@ -234,11 +234,14 @@ function AdminPage() {
     historyOrders.forEach(o => {
       o.order_items.forEach(oi => {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
+        const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
+        const effectivePaid = o.paid || (o.credit_used || 0) >= subtotal
         map[oi.menu_item_name].push({
           customerName: o.customers?.name,
           quantity: oi.quantity,
           options: oi.order_item_options,
-          paid: o.paid
+          paid: o.paid,
+          effectivePaid
         })
       })
     })
@@ -476,8 +479,8 @@ function AdminPage() {
                             </div>
                           )}
                         </div>
-                        <span style={{ ...st.badge, background: entry.paid ? '#d4e8d8' : '#fef3e2', color: entry.paid ? '#1a3d2b' : '#e67e22' }}>
-                          {entry.paid ? '✓ Lunas' : '⏳ Belum'}
+                        <span style={{ ...st.badge, background: entry.effectivePaid ? '#d4e8d8' : '#fef3e2', color: entry.effectivePaid ? '#1a3d2b' : '#e67e22' }}>
+                          {entry.effectivePaid ? '✓ Lunas' : '⏳ Belum'}
                         </span>
                       </div>
                     </div>
