@@ -11,6 +11,7 @@ function AnalyticsPage() {
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
   const [loyaltyBy, setLoyaltyBy] = useState('spending')
+  const [groupBy, setGroupBy] = useState('order')
 
   const today = new Date()
 
@@ -73,12 +74,24 @@ function AnalyticsPage() {
 
   const dailyMap = {}
   orders.forEach(o => {
-    const date = o.created_at.split('T')[0]
-    if (!dailyMap[date]) dailyMap[date] = { cups: 0, revenue: 0 }
+    const date = groupBy === 'order'
+      ? o.created_at.split('T')[0]
+      : o.order_for_date || o.created_at.split('T')[0]
+    if (!dailyMap[date]) dailyMap[date] = { cups: 0, revenue: 0, credit: 0, cash: 0, unpaid: 0 }
+    const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
+    const creditUsed = o.credit_used || 0
+    const sisaTagihan = Math.max(0, subtotal - creditUsed)
+    const effectivePaid = o.paid || sisaTagihan === 0
     o.order_items.forEach(oi => {
       dailyMap[date].cups += oi.quantity
       dailyMap[date].revenue += oi.price_at_order * oi.quantity
     })
+    dailyMap[date].credit += creditUsed
+    if (effectivePaid) {
+      dailyMap[date].cash += subtotal - creditUsed
+    } else {
+      dailyMap[date].unpaid += sisaTagihan
+    }
   })
   const dailyData = Object.entries(dailyMap).sort(([a], [b]) => a.localeCompare(b))
   const maxCups = Math.max(...dailyData.map(([, d]) => d.cups), 1)
@@ -191,6 +204,14 @@ function AnalyticsPage() {
           {dailyData.length > 0 && (
             <>
               <div style={st.sectionTitle}>Tren Harian</div>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                {[['order', 'Tanggal Pesan'], ['delivery', 'Tanggal Delivery']].map(([v, label]) => (
+                  <label key={v} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '13px', color: '#2c2c2a', cursor: 'pointer' }}>
+                    <input type="radio" name="groupBy" value={v} checked={groupBy === v} onChange={() => setGroupBy(v)} />
+                    {label}
+                  </label>
+                ))}
+              </div>
               <div style={st.tableBox}>
                 <div style={st.tableHeader}>
                   <span style={{ flex: 2 }}>Tanggal</span>
@@ -198,17 +219,35 @@ function AnalyticsPage() {
                   <span style={{ flex: 2, textAlign: 'right' }}>Revenue</span>
                 </div>
                 {dailyData.map(([date, d]) => (
-                  <div key={date}>
+                  <div key={date} style={{ borderBottom: '0.5px solid #e4ddd2' }}>
                     <div style={st.tableRow}>
                       <span style={{ flex: 2, fontSize: '12px', color: '#2c2c2a' }}>
                         {format(parseISO(date), 'EEE, d MMM yyyy', { locale: id })}
                       </span>
                       <span style={{ flex: 1, textAlign: 'right', fontSize: '12px', color: '#2c2c2a' }}>{d.cups}</span>
-                      <span style={{ flex: 2, textAlign: 'right', fontSize: '12px', color: '#1a3d2b' }}>
+                      <span style={{ flex: 2, textAlign: 'right', fontSize: '12px', fontWeight: '500', color: '#2c2c2a' }}>
                         Rp {d.revenue.toLocaleString('id-ID')}
                       </span>
                     </div>
-                    <div style={{ padding: '0 12px 6px' }}>
+                    <div style={{ padding: '0 12px 6px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      {d.cash > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#1a3d2b' }}>
+                          <span>↳ Cash</span>
+                          <span>Rp {d.cash.toLocaleString('id-ID')}</span>
+                        </div>
+                      )}
+                      {d.credit > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#2d7a4f' }}>
+                          <span>↳ Credit</span>
+                          <span>Rp {d.credit.toLocaleString('id-ID')}</span>
+                        </div>
+                      )}
+                      {d.unpaid > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#c0392b' }}>
+                          <span>↳ Belum Bayar</span>
+                          <span>Rp {d.unpaid.toLocaleString('id-ID')}</span>
+                        </div>
+                      )}
                       <div style={st.barBg}>
                         <div style={{ ...st.barFill, width: `${(d.cups / maxCups) * 100}%`, background: '#1a3d2b' }} />
                       </div>
