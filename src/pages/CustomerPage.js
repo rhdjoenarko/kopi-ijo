@@ -54,6 +54,7 @@ function CustomerPage() {
   const [showSummary, setShowSummary] = useState(false)
   const [expandedOrder, setExpandedOrder] = useState(null)
   const [orderCutoff, setOrderCutoff] = useState(7)
+  const [paymentAccounts, setPaymentAccounts] = useState([])
 
   useEffect(() => {
     supabase.from('settings').select('*').then(({ data }) => {
@@ -67,6 +68,9 @@ function CustomerPage() {
         setIsNextDay(new Date().getHours() >= cutoff)
         setTodayIndex(target.getDay())
       }
+    })
+    supabase.from('payment_accounts').select('*').eq('active', true).order('sort_order').then(({ data }) => {
+      if (data) setPaymentAccounts(data)
     })
   }, [])
 
@@ -404,26 +408,45 @@ function CustomerPage() {
                 <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Riwayat & Tagihan</h3>
                 {orders.length === 0 && <p style={{ color: '#5a5248' }}>Belum ada order.</p>}
 
-                <div style={{ ...st.metricCard, marginBottom: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '13px', color: '#5a5248' }}>Saldo Credit</span>
-                    <strong style={{ color: '#1a3d2b' }}>Rp {(customer?.credit_balance || 0).toLocaleString('id-ID')}</strong>
-                  </div>
-                  {(() => {
-                    const totalBelumBayar = orders
-                      .filter(o => !o.paid)
-                      .reduce((sum, o) => {
-                        const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-                        return sum + Math.max(0, subtotal - (o.credit_used || 0))
-                      }, 0)
-                    return totalBelumBayar > 0 ? (
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ fontSize: '13px', color: '#5a5248' }}>Total Belum Dibayar</span>
-                        <strong style={{ color: '#c0392b' }}>Rp {totalBelumBayar.toLocaleString('id-ID')}</strong>
+                {(() => {
+                  const totalBelumBayar = orders
+                    .filter(o => !o.paid)
+                    .reduce((sum, o) => {
+                      const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
+                      return sum + Math.max(0, subtotal - (o.credit_used || 0))
+                    }, 0)
+                  return (
+                    <>
+                      <div style={{ ...st.metricCard, marginBottom: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: totalBelumBayar > 0 ? '8px' : 0 }}>
+                          <span style={{ fontSize: '13px', color: '#5a5248' }}>Saldo Credit</span>
+                          <strong style={{ color: '#1a3d2b' }}>Rp {(customer?.credit_balance || 0).toLocaleString('id-ID')}</strong>
+                        </div>
+                        {totalBelumBayar > 0 && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ fontSize: '13px', color: '#5a5248' }}>Total Belum Dibayar</span>
+                            <strong style={{ color: '#c0392b' }}>Rp {totalBelumBayar.toLocaleString('id-ID')}</strong>
+                          </div>
+                        )}
                       </div>
-                    ) : null
-                  })()}
-                </div>
+
+                      {paymentAccounts.length > 0 && totalBelumBayar > 0 && (
+                        <div style={{ background: '#f7f3ee', border: '0.5px solid #d6cfc4', borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
+                          <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3d2b', marginBottom: '10px' }}>💳 Info Pembayaran</div>
+                          <div style={{ fontSize: '12px', color: '#5a5248', marginBottom: '8px' }}>Transfer ke salah satu rekening berikut:</div>
+                          {paymentAccounts.map(pa => (
+                            <div key={pa.id} style={{ background: '#fff', border: '0.5px solid #d6cfc4', borderRadius: '8px', padding: '10px', marginBottom: '6px' }}>
+                              <div style={{ fontSize: '12px', color: '#888', marginBottom: '2px' }}>{pa.bank_name}</div>
+                              <div style={{ fontSize: '15px', fontWeight: '500', color: '#2c2c2a', letterSpacing: '0.5px' }}>{pa.account_number}</div>
+                              <div style={{ fontSize: '12px', color: '#5a5248', marginTop: '2px' }}>a.n. {pa.account_name}</div>
+                            </div>
+                          ))}
+                          <div style={{ fontSize: '11px', color: '#888', marginTop: '6px' }}>Setelah transfer, konfirmasi ke kami via WhatsApp ya! 🙏</div>
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
 
                 {orders.map(o => {
                   const orderTotal = o.order_items.reduce((sum, oi) => sum + oi.price_at_order * oi.quantity, 0)

@@ -33,6 +33,9 @@ function AdminPage() {
   const [manualBillAmount, setManualBillAmount] = useState({})
   const [manualBillNote, setManualBillNote] = useState({})
   const [manualBillUseCredit, setManualBillUseCredit] = useState({})
+  const [paymentAccounts, setPaymentAccounts] = useState([])
+  const [paForm, setPaForm] = useState({ bank_name: '', account_number: '', account_name: '', sort_order: 0 })
+  const [editingPa, setEditingPa] = useState(null)
   const [workDateLabel, setWorkDateLabel] = useState('')
 
   const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '' })
@@ -119,17 +122,23 @@ function AdminPage() {
     if (data) setAllCustomers(data)
   }, [])
 
+  const fetchPaymentAccounts = useCallback(async () => {
+    const { data } = await supabase.from('payment_accounts').select('*').order('sort_order')
+    if (data) setPaymentAccounts(data)
+  }, [])
+
   useEffect(() => {
     async function init() {
       setLoading(true)
       await fetchWorkOrders()
       await fetchAllUnpaid()
       await fetchAllCustomers()
+      await fetchPaymentAccounts()
       await Promise.all([fetchMenu(), fetchOptionGroups(), fetchDailyTotals()])
       setLoading(false)
     }
     init()
-  }, [fetchWorkOrders, fetchAllUnpaid, fetchAllCustomers, fetchMenu, fetchOptionGroups, fetchDailyTotals])
+  }, [fetchWorkOrders, fetchAllUnpaid, fetchAllCustomers, fetchPaymentAccounts, fetchMenu, fetchOptionGroups, fetchDailyTotals])
 
   async function handleTopUp(customerId, phone) {
     const amount = parseInt(topUpAmount[phone])
@@ -206,6 +215,28 @@ function AdminPage() {
     setManualBillNote(prev => ({ ...prev, [phone]: '' }))
     fetchAllCustomers()
     fetchAllUnpaid()
+  }
+
+  async function savePaymentAccount() {
+    if (!paForm.bank_name.trim() || !paForm.account_number.trim() || !paForm.account_name.trim()) {
+      setError('Semua field rekening wajib diisi.'); return
+    }
+    setError('')
+    const payload = { bank_name: paForm.bank_name.trim(), account_number: paForm.account_number.trim(), account_name: paForm.account_name.trim(), sort_order: parseInt(paForm.sort_order) || 0, active: true }
+    if (editingPa) {
+      await supabase.from('payment_accounts').update(payload).eq('id', editingPa)
+    } else {
+      await supabase.from('payment_accounts').insert(payload)
+    }
+    setPaForm({ bank_name: '', account_number: '', account_name: '', sort_order: 0 })
+    setEditingPa(null)
+    fetchPaymentAccounts()
+  }
+
+  async function deletePaymentAccount(id) {
+    if (!window.confirm('Hapus rekening ini?')) return
+    await supabase.from('payment_accounts').delete().eq('id', id)
+    fetchPaymentAccounts()
   }
 
   function getWorkOrderGroups() {
@@ -374,10 +405,10 @@ function AdminPage() {
         {loading && <p style={{ color: '#5a5248', padding: '8px 16px', fontSize: '13px' }}>Memuat...</p>}
 
         <div style={st.tabs}>
-          {['workorder', 'history', 'billing', 'menu', 'options', 'settings'].map(t => (
+          {['workorder', 'history', 'billing', 'menu', 'options', 'payment', 'settings'].map(t => (
             <button key={t} style={{ ...st.tab, ...(tab === t ? st.tabActive : {}) }}
               onClick={() => { setTab(t); if (t === 'history') fetchHistoryOrders(historyDate, historyFilter) }}>
-              {{ workorder: '📋 Work Order', history: '📅 History', billing: '💰 Tagihan', menu: '☕ Menu', options: '🎛 Opsi', settings: '⚙️ Setting' }[t]}
+              {{ workorder: '📋 Work Order', history: '📅 History', billing: '💰 Tagihan', menu: '☕ Menu', options: '🎛 Opsi', payment: '🏦 Rekening', settings: '⚙️ Setting' }[t]}
             </button>
           ))}
         </div>
@@ -746,6 +777,44 @@ function AdminPage() {
                     {og.option_choices.sort((a, b) => a.sort_order - b.sort_order).map(c => (
                       <span key={c.id} style={st.tag}>{c.label}{c.price_addition > 0 ? ` +Rp ${c.price_addition.toLocaleString('id-ID')}` : ''}</span>
                     ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {tab === 'payment' && (
+            <div>
+              <div style={st.sectionBox}>
+                <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>{editingPa ? 'Edit Rekening' : 'Tambah Rekening'}</h3>
+                <input style={st.input} placeholder="Nama Bank (misal: BCA, Mandiri, QRIS)" value={paForm.bank_name}
+                  onChange={e => setPaForm(f => ({ ...f, bank_name: e.target.value }))} />
+                <input style={st.input} placeholder="Nomor Rekening / Nomor QRIS" value={paForm.account_number}
+                  onChange={e => setPaForm(f => ({ ...f, account_number: e.target.value }))} />
+                <input style={st.input} placeholder="Nama Pemilik Rekening" value={paForm.account_name}
+                  onChange={e => setPaForm(f => ({ ...f, account_name: e.target.value }))} />
+                <input style={st.input} placeholder="Urutan tampil" type="number" value={paForm.sort_order}
+                  onChange={e => setPaForm(f => ({ ...f, sort_order: e.target.value }))} />
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button style={st.btn} onClick={savePaymentAccount}>{editingPa ? 'Update' : 'Simpan'}</button>
+                  {editingPa && <button style={st.btnOutline} onClick={() => { setPaForm({ bank_name: '', account_number: '', account_name: '', sort_order: 0 }); setEditingPa(null) }}>Batal</button>}
+                </div>
+              </div>
+
+              <h3 style={{ color: '#1a3d2b', margin: '20px 0 12px' }}>Daftar Rekening</h3>
+              {paymentAccounts.length === 0 && <p style={{ color: '#5a5248' }}>Belum ada rekening.</p>}
+              {paymentAccounts.map(pa => (
+                <div key={pa.id} style={st.itemCard}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <strong style={{ color: '#2c2c2a' }}>{pa.bank_name}</strong>
+                      <div style={{ fontSize: '13px', color: '#1a3d2b', marginTop: '2px', fontWeight: '500' }}>{pa.account_number}</div>
+                      <div style={{ fontSize: '12px', color: '#5a5248' }}>{pa.account_name}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button style={st.btnSmall} onClick={() => { setEditingPa(pa.id); setPaForm({ bank_name: pa.bank_name, account_number: pa.account_number, account_name: pa.account_name, sort_order: pa.sort_order }) }}>Edit</button>
+                      <button style={{ ...st.btnSmall, background: '#c0392b' }} onClick={() => deletePaymentAccount(pa.id)}>Hapus</button>
+                    </div>
                   </div>
                 </div>
               ))}
