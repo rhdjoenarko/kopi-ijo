@@ -3,11 +3,31 @@ import { supabase } from '../lib/supabase'
 
 const DAYS = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu']
 
-function getOrderTarget(cutoffHour) {
+function isDateClosed(date, closedDays) {
+  const dayOfWeek = date.getDay()
+  const dateStr = date.toLocaleDateString('en-CA')
+  return closedDays.some(cd => {
+    if (cd.type === 'recurring') return cd.day_of_week === dayOfWeek
+    if (cd.type === 'specific') return cd.specific_date === dateStr
+    return false
+  })
+}
+
+function getNextOpenDate(fromDate, closedDays) {
+  const target = new Date(fromDate)
+  let attempts = 0
+  while (isDateClosed(target, closedDays) && attempts < 14) {
+    target.setDate(target.getDate() + 1)
+    attempts++
+  }
+  return target
+}
+
+function getOrderTarget(cutoffHour, closedDays = []) {
   const now = new Date()
   const target = new Date(now)
   if (now.getHours() >= cutoffHour) target.setDate(target.getDate() + 1)
-  return target
+  return getNextOpenDate(target, closedDays)
 }
 
 function formatOrderDate(date) {
@@ -55,28 +75,35 @@ function CustomerPage() {
   const [expandedOrder, setExpandedOrder] = useState(null)
   const [orderCutoff, setOrderCutoff] = useState(7)
   const [paymentAccounts, setPaymentAccounts] = useState([])
-
-  useEffect(() => {
-    supabase.from('settings').select('*').then(({ data }) => {
-      if (data) {
-        const map = {}
-        data.forEach(d => { map[d.key] = parseInt(d.value) })
-        const cutoff = map.order_cutoff_hour ?? 7
-        setOrderCutoff(cutoff)
-        const target = getOrderTarget(cutoff)
-        setOrderTarget(target)
-        setIsNextDay(new Date().getHours() >= cutoff)
-        setTodayIndex(target.getDay())
-      }
-    })
-    supabase.from('payment_accounts').select('*').eq('active', true).order('sort_order').then(({ data }) => {
-      if (data) setPaymentAccounts(data)
-    })
-  }, [])
-
+  const [closedDays, setClosedDays] = useState([])
   const [orderTarget, setOrderTarget] = useState(getOrderTarget(7))
   const [isNextDay, setIsNextDay] = useState(false)
   const [todayIndex, setTodayIndex] = useState(getOrderTarget(7).getDay())
+
+  useEffect(() => {
+    async function loadSettings() {
+      const [{ data: settingsData }, { data: paData }, { data: cdData }] = await Promise.all([
+        supabase.from('settings').select('*'),
+        supabase.from('payment_accounts').select('*').eq('active', true).order('sort_order'),
+        supabase.from('closed_days').select('*')
+      ])
+      if (paData) setPaymentAccounts(paData)
+      const cds = cdData || []
+      setClosedDays(cds)
+      if (settingsData) {
+        const map = {}
+        settingsData.forEach(d => { map[d.key] = parseInt(d.value) })
+        const cutoff = map.order_cutoff_hour ?? 7
+        setOrderCutoff(cutoff)
+        const target = getOrderTarget(cutoff, cds)
+        setOrderTarget(target)
+        const now = new Date()
+        setIsNextDay(target.toLocaleDateString('en-CA') !== now.toLocaleDateString('en-CA'))
+        setTodayIndex(target.getDay())
+      }
+    }
+    loadSettings()
+  }, [])
 
   useEffect(() => {
     if (step === 'menu') { fetchMenu(); fetchMyOrders() }
@@ -174,11 +201,8 @@ function CustomerPage() {
         .join('|')
       const key = `${cartItem.item.id}__${optionKey}`
       const existing = merged.find(m => m.key === key)
-      if (existing) {
-        existing.quantity += cartItem.quantity
-      } else {
-        merged.push({ ...cartItem, quantity: cartItem.quantity, key })
-      }
+      if (existing) { existing.quantity += cartItem.quantity }
+      else merged.push({ ...cartItem, quantity: cartItem.quantity, key })
     })
     return merged
   }
@@ -187,26 +211,24 @@ function CustomerPage() {
 
   async function handleOrder() {
     setLoading(true); setError(''); setShowSummary(false)
-    // Hitung total order
     const orderTotal = cart.reduce((sum, cartItem) => {
       const itemPrice = cartItem.item.price + Object.values(cartItem.selectedOptions).reduce((s, c) => s + (c?.price_addition || 0), 0)
       return sum + itemPrice * cartItem.quantity
     }, 0)
-
-    // Hitung credit yang dipakai
     const { data: customerData } = await supabase.from('customers').select('credit_balance').eq('id', customer.id).single()
     const availableCredit = customerData?.credit_balance || 0
     const creditUsed = Math.min(availableCredit, orderTotal)
-
-    // Kurangi credit customer
     if (creditUsed > 0) {
       await supabase.from('customers').update({ credit_balance: availableCredit - creditUsed }).eq('id', customer.id)
     }
-
-    const { data: order, error: orderError } = await supabase.from('orders').insert({ 
+    const isPaid = creditUsed >= orderTotal
+    const { data: order, error: orderError } = await supabase.from('orders').insert({
       customer_id: customer.id,
       order_for_date: orderTarget.toLocaleDateString('en-CA'),
-      credit_used: creditUsed
+      credit_used: creditUsed,
+      voided: false,
+      paid: isPaid,
+      paid_at: isPaid ? new Date().toISOString() : null
     }).select().single()
     if (orderError) { setError('Gagal membuat order.'); setLoading(false); return }
     for (const cartItem of cart) {
@@ -228,6 +250,11 @@ function CustomerPage() {
     setLoading(false); setOrderSuccess(true); setCart([]); fetchMyOrders(); refreshCustomer()
   }
 
+  const now = new Date()
+  const todayStr = now.toLocaleDateString('en-CA')
+  const targetStr = orderTarget.toLocaleDateString('en-CA')
+  const isClosed = isDateClosed(orderTarget, closedDays)
+
   if (orderSuccess) return (
     <div style={st.container}>
       <div style={st.card}>
@@ -239,7 +266,7 @@ function CustomerPage() {
           <div style={{ fontSize: '40px', marginBottom: '12px' }}>✓</div>
           <h2 style={{ color: '#1a3d2b', margin: '0 0 8px' }}>Order masuk!</h2>
           <p style={{ color: '#5a5248', fontSize: '14px', margin: '0 0 24px' }}>
-            Makasih ya, <strong>{customer?.name}</strong>! Ordermu untuk <strong>{isNextDay ? 'besok' : 'hari ini'} ({formatOrderDate(orderTarget)})</strong> udah kami terima. Sampai ketemu! ☕
+            Makasih ya, <strong>{customer?.name}</strong>! Ordermu untuk <strong>{targetStr === todayStr ? 'hari ini' : 'tanggal'} ({formatOrderDate(orderTarget)})</strong> udah kami terima. Sampai ketemu! ☕
           </p>
           <button style={st.btn} onClick={() => { setOrderSuccess(false); setActiveTab('menu'); fetchMenu() }}>Order Lagi</button>
           <button style={{ ...st.btnOutline, marginTop: '8px' }} onClick={() => { setOrderSuccess(false); setActiveTab('riwayat') }}>Lihat Riwayat</button>
@@ -251,12 +278,10 @@ function CustomerPage() {
   return (
     <div style={st.container}>
       <div style={st.card}>
-
         <div style={st.header}>
           <img src="https://haixnqmapezjikgpwjqh.supabase.co/storage/v1/object/public/assets/kopi%20ijo.png"
             alt="Kopi Ijø" style={{ height: '80px', objectFit: 'contain' }} />
         </div>
-
         {error && <p style={st.error}>{error}</p>}
 
         {step === 'phone' && (
@@ -290,7 +315,7 @@ function CustomerPage() {
 
             <div style={isNextDay ? st.notifNextDay : st.notifToday}>
               {isNextDay
-                ? <span>⚠️ <strong>Sudah lewat jam {orderCutoff}:00 — kamu sedang order untuk BESOK ({formatOrderDate(orderTarget)})</strong></span>
+                ? <span>⚠️ <strong>Sudah lewat jam {orderCutoff}:00 — kamu sedang order untuk {formatOrderDate(orderTarget)}</strong></span>
                 : <span>📅 Order untuk hari ini: <strong>{formatOrderDate(orderTarget)}</strong></span>
               }
             </div>
@@ -302,25 +327,21 @@ function CustomerPage() {
 
             {activeTab === 'menu' && (
               <div style={{ padding: '0 16px 16px' }}>
-                {menuItems.length === 0 && <p style={{ color: '#5a5248' }}>Tidak ada menu tersedia {isNextDay ? 'besok' : 'hari ini'}.</p>}
-
+                {menuItems.length === 0 && <p style={{ color: '#5a5248' }}>Tidak ada menu tersedia untuk {formatOrderDate(orderTarget)}.</p>}
                 {menuItems.map(item => {
                   const isSoldOut = item.daily_limit !== null && item.soldToday >= item.daily_limit
                   return (
                     <div key={item.id} style={{ ...st.menuItem, opacity: isSoldOut ? 0.5 : 1, padding: 0, overflow: 'hidden' }}>
                       {item.image_url && (
                         <div style={{ position: 'relative' }}>
-                          <img src={item.image_url} alt={item.name}
-                            style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', display: 'block' }} />
+                          <img src={item.image_url} alt={item.name} style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', display: 'block' }} />
                           {item.daily_limit && !isSoldOut && (
                             <span style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(0,0,0,0.45)', color: '#fff', fontSize: '11px', padding: '3px 8px', borderRadius: '20px' }}>
                               Sisa {item.daily_limit - item.soldToday}
                             </span>
                           )}
                           {isSoldOut && (
-                            <span style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(192,57,43,0.85)', color: '#fff', fontSize: '11px', padding: '3px 8px', borderRadius: '20px' }}>
-                              Habis
-                            </span>
+                            <span style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(192,57,43,0.85)', color: '#fff', fontSize: '11px', padding: '3px 8px', borderRadius: '20px' }}>Habis</span>
                           )}
                         </div>
                       )}
@@ -366,9 +387,7 @@ function CustomerPage() {
                               <div style={st.optionBtns}>
                                 {!og.required && (
                                   <button style={{ ...st.optBtn, ...(!cartItem.selectedOptions[og.id] ? st.optBtnActive : {}) }}
-                                    onClick={() => updateOption(cartItem.cartId, og.id, null)}>
-                                    Tidak ada
-                                  </button>
+                                    onClick={() => updateOption(cartItem.cartId, og.id, null)}>Tidak ada</button>
                                 )}
                                 {og.choices.map(choice => (
                                   <button key={choice.id}
@@ -410,7 +429,7 @@ function CustomerPage() {
 
                 {(() => {
                   const totalBelumBayar = orders
-                    .filter(o => !o.paid)
+                    .filter(o => !o.paid && !o.voided)
                     .reduce((sum, o) => {
                       const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
                       return sum + Math.max(0, subtotal - (o.credit_used || 0))
@@ -429,7 +448,6 @@ function CustomerPage() {
                           </div>
                         )}
                       </div>
-
                       {paymentAccounts.length > 0 && totalBelumBayar > 0 && (
                         <div style={{ background: '#f7f3ee', border: '0.5px solid #d6cfc4', borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
                           <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3d2b', marginBottom: '10px' }}>💳 Info Pembayaran</div>
@@ -451,46 +469,40 @@ function CustomerPage() {
                 {orders.map(o => {
                   const orderTotal = o.order_items.reduce((sum, oi) => sum + oi.price_at_order * oi.quantity, 0)
                   const isExpanded = expandedOrder === o.id
+                  const sisaTagihan = Math.max(0, orderTotal - (o.credit_used || 0))
+                  const effectivePaid = o.paid || sisaTagihan === 0
+                  const borderColor = o.voided ? '#ccc' : effectivePaid ? '#1a3d2b' : '#e67e22'
                   return (
-                    <div key={o.id} style={{ ...st.orderCard, borderLeft: `4px solid ${o.paid ? '#1a3d2b' : '#e67e22'}` }}>
+                    <div key={o.id} style={{ ...st.orderCard, borderLeft: `4px solid ${borderColor}`, opacity: o.voided ? 0.6 : 1 }}>
                       <div style={{ ...st.orderHeader, cursor: 'pointer' }} onClick={() => setExpandedOrder(isExpanded ? null : o.id)}>
                         <div>
                           <div style={st.meta}>Dipesan: {formatTimestamp(o.created_at)}</div>
                           <div style={{ fontSize: '12px', color: '#1a3d2b', fontWeight: '500', marginTop: '2px' }}>
                             Delivery: {formatOrderFor(o.order_for_date, o.created_at, orderCutoff)}
                           </div>
-                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '0.5px solid #d6cfc4' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#2c2c2a' }}>
-                          <span>Subtotal</span>
-                          <span>Rp {orderTotal.toLocaleString('id-ID')}</span>
-                        </div>
-                        {o.credit_used > 0 && (
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#1a3d2b' }}>
-                            <span>Credit dipakai</span>
-                            <span>- Rp {o.credit_used.toLocaleString('id-ID')}</span>
-                          </div>
-                        )}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: o.paid ? '#1a3d2b' : '#c0392b', marginTop: '4px' }}>
-                          <span>Total Tagihan</span>
-                          <span>Rp {(orderTotal - (o.credit_used || 0)).toLocaleString('id-ID')}</span>
-                        </div>
-                      </div>
+                          {!o.voided && (
+                            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '0.5px solid #d6cfc4' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#2c2c2a' }}>
+                                <span>Subtotal</span><span>Rp {orderTotal.toLocaleString('id-ID')}</span>
+                              </div>
+                              {o.credit_used > 0 && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#1a3d2b' }}>
+                                  <span>Credit dipakai</span><span>- Rp {o.credit_used.toLocaleString('id-ID')}</span>
+                                </div>
+                              )}
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: effectivePaid ? '#1a3d2b' : '#c0392b', marginTop: '4px' }}>
+                                <span>Total Tagihan</span><span>Rp {sisaTagihan.toLocaleString('id-ID')}</span>
+                              </div>
+                            </div>
+                          )}
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-                          {(() => {
-                            const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-                            const sisaTagihan = Math.max(0, subtotal - (o.credit_used || 0))
-                            const effectivePaid = o.paid || sisaTagihan === 0
-                            return (
-                              <span style={{ ...st.badge, background: effectivePaid ? '#d4e8d8' : '#fef3e2', color: effectivePaid ? '#1a3d2b' : '#e67e22' }}>
-                                {effectivePaid ? '✓ Lunas' : '⏳ Belum Bayar'}
-                              </span>
-                            )
-                          })()}
+                          <span style={{ ...st.badge, background: o.voided ? '#f0f0f0' : effectivePaid ? '#d4e8d8' : '#fef3e2', color: o.voided ? '#888' : effectivePaid ? '#1a3d2b' : '#e67e22' }}>
+                            {o.voided ? '✕ Void' : effectivePaid ? '✓ Lunas' : '⏳ Belum Bayar'}
+                          </span>
                           <span style={{ fontSize: '11px', color: '#888' }}>{isExpanded ? '▲ tutup' : '▼ detail'}</span>
                         </div>
                       </div>
-
                       {isExpanded && (
                         <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '0.5px solid #d6cfc4' }}>
                           {o.order_items.map(oi => (
@@ -529,7 +541,7 @@ function CustomerPage() {
             <div style={{ padding: '16px' }}>
               <div style={isNextDay ? st.notifNextDay : st.notifToday}>
                 {isNextDay
-                  ? <span>⚠️ <strong>Order untuk BESOK ({formatOrderDate(orderTarget)})</strong></span>
+                  ? <span>⚠️ <strong>Order untuk {formatOrderDate(orderTarget)}</strong></span>
                   : <span>📅 Order untuk hari ini: <strong>{formatOrderDate(orderTarget)}</strong></span>}
               </div>
               {getMergedCart().map(cartItem => (
@@ -554,9 +566,7 @@ function CustomerPage() {
               <button style={st.btn} onClick={handleOrder} disabled={loading}>
                 {loading ? 'Memproses...' : '✓ Konfirmasi Order'}
               </button>
-              <button style={{ ...st.btnOutline, marginTop: '8px' }} onClick={() => setShowSummary(false)}>
-                Batal
-              </button>
+              <button style={{ ...st.btnOutline, marginTop: '8px' }} onClick={() => setShowSummary(false)}>Batal</button>
             </div>
           </div>
         </div>
@@ -598,7 +608,6 @@ const st = {
   totalRow: { display: 'flex', justifyContent: 'space-between', fontSize: '15px', padding: '8px 0', borderTop: '0.5px solid #d6cfc4', marginTop: '4px' },
   orderCard: { background: '#f7f3ee', border: '0.5px solid #d6cfc4', borderRadius: '8px', padding: '12px', marginBottom: '10px' },
   orderHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', marginBottom: '4px' },
-  unpaidBox: { background: '#fef3e2', border: '1px solid #e67e22', borderRadius: '8px', padding: '12px', marginBottom: '12px', color: '#7d3c00', fontSize: '14px' },
   badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '500' },
   tag: { background: '#d4e8d8', color: '#1a3d2b', padding: '2px 8px', borderRadius: '20px', fontSize: '12px' },
   meta: { color: '#888', fontSize: '12px' },

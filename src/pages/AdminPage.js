@@ -36,6 +36,8 @@ function AdminPage() {
   const [paymentAccounts, setPaymentAccounts] = useState([])
   const [paForm, setPaForm] = useState({ bank_name: '', account_number: '', account_name: '', sort_order: 0 })
   const [editingPa, setEditingPa] = useState(null)
+  const [closedDays, setClosedDays] = useState([])
+  const [closedDayForm, setClosedDayForm] = useState({ type: 'recurring', day_of_week: 1, specific_date: '', note: '' })
   const [workDateLabel, setWorkDateLabel] = useState('')
 
   const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '' })
@@ -93,6 +95,7 @@ function AdminPage() {
       .from('orders')
       .select(`*, customers(name, phone), order_items(*, order_item_options(*))`)
       .eq('order_for_date', deliveryStr)
+      .eq('voided', false)
       .order('created_at', { ascending: true })
     if (data) setOrders(data)
   }, [])
@@ -113,6 +116,7 @@ function AdminPage() {
       .from('orders')
       .select(`*, customers(name, phone), order_items(*, order_item_options(*))`)
       .eq('paid', false)
+      .eq('voided', false)
       .order('created_at', { ascending: false })
     if (data) setAllUnpaidOrders(data)
   }, [])
@@ -127,6 +131,11 @@ function AdminPage() {
     if (data) setPaymentAccounts(data)
   }, [])
 
+  const fetchClosedDays = useCallback(async () => {
+    const { data } = await supabase.from('closed_days').select('*').order('created_at')
+    if (data) setClosedDays(data)
+  }, [])
+
   useEffect(() => {
     async function init() {
       setLoading(true)
@@ -134,25 +143,19 @@ function AdminPage() {
       await fetchAllUnpaid()
       await fetchAllCustomers()
       await fetchPaymentAccounts()
+      await fetchClosedDays()
       await Promise.all([fetchMenu(), fetchOptionGroups(), fetchDailyTotals()])
       setLoading(false)
     }
     init()
-  }, [fetchWorkOrders, fetchAllUnpaid, fetchAllCustomers, fetchPaymentAccounts, fetchMenu, fetchOptionGroups, fetchDailyTotals])
+  }, [fetchWorkOrders, fetchAllUnpaid, fetchAllCustomers, fetchPaymentAccounts, fetchClosedDays, fetchMenu, fetchOptionGroups, fetchDailyTotals])
 
   async function handleTopUp(customerId, phone) {
     const amount = parseInt(topUpAmount[phone])
     if (!amount || amount <= 0) return
-
     const customer = allCustomers.find(c => c.id === customerId)
     let remainingCredit = (customer?.credit_balance || 0) + amount
-
-    await supabase.from('customer_credits').insert({
-      customer_id: customerId,
-      amount,
-      note: topUpNote[phone] || ''
-    })
-
+    await supabase.from('customer_credits').insert({ customer_id: customerId, amount, note: topUpNote[phone] || '' })
     const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === phone)
     for (const o of unpaidOrders) {
       const orderBill = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.credit_used || 0)
@@ -168,9 +171,7 @@ function AdminPage() {
         remainingCredit = 0
       }
     }
-
     await supabase.from('customers').update({ credit_balance: remainingCredit }).eq('id', customerId)
-
     setTopUpAmount(prev => ({ ...prev, [phone]: '' }))
     setTopUpNote(prev => ({ ...prev, [phone]: '' }))
     fetchAllCustomers()
@@ -182,39 +183,45 @@ function AdminPage() {
     if (!amount || amount <= 0) return
     const note = manualBillNote[phone] || 'Tagihan manual'
     const useCredit = manualBillUseCredit[phone] ?? true
-
     const customer = allCustomers.find(c => c.id === customerId)
     let creditUsed = 0
-
     if (useCredit && (customer?.credit_balance || 0) > 0) {
       creditUsed = Math.min(customer.credit_balance, amount)
       await supabase.from('customers').update({ credit_balance: customer.credit_balance - creditUsed }).eq('id', customerId)
     }
-
     const isPaid = creditUsed >= amount
-
     const { data: order } = await supabase.from('orders').insert({
       customer_id: customerId,
       order_for_date: new Date().toLocaleDateString('en-CA'),
       credit_used: creditUsed,
       paid: isPaid,
+      voided: false,
       paid_at: isPaid ? new Date().toISOString() : null
     }).select().single()
-
     if (order) {
       await supabase.from('order_items').insert({
-        order_id: order.id,
-        menu_item_id: null,
-        menu_item_name: note,
-        price_at_order: amount,
-        quantity: 1
+        order_id: order.id, menu_item_id: null,
+        menu_item_name: note, price_at_order: amount, quantity: 1
       })
     }
-
     setManualBillAmount(prev => ({ ...prev, [phone]: '' }))
     setManualBillNote(prev => ({ ...prev, [phone]: '' }))
     fetchAllCustomers()
     fetchAllUnpaid()
+  }
+
+  async function voidOrder(orderId) {
+    if (!window.confirm('Void order ini? Credit yang sudah terpotong akan dikembalikan ke customer.')) return
+    const order = allUnpaidOrders.find(o => o.id === orderId) || orders.find(o => o.id === orderId)
+    if (!order) return
+    if (order.credit_used > 0) {
+      const { data: cust } = await supabase.from('customers').select('credit_balance').eq('id', order.customer_id).single()
+      await supabase.from('customers').update({ credit_balance: (cust?.credit_balance || 0) + order.credit_used }).eq('id', order.customer_id)
+    }
+    await supabase.from('orders').update({ voided: true, voided_at: new Date().toISOString() }).eq('id', orderId)
+    fetchAllUnpaid()
+    fetchAllCustomers()
+    fetchWorkOrders()
   }
 
   async function savePaymentAccount() {
@@ -239,22 +246,44 @@ function AdminPage() {
     fetchPaymentAccounts()
   }
 
+  async function saveClosedDay() {
+    if (closedDayForm.type === 'specific' && !closedDayForm.specific_date) {
+      setError('Pilih tanggal tutup.'); return
+    }
+    setError('')
+    const payload = {
+      type: closedDayForm.type,
+      day_of_week: closedDayForm.type === 'recurring' ? parseInt(closedDayForm.day_of_week) : null,
+      specific_date: closedDayForm.type === 'specific' ? closedDayForm.specific_date : null,
+      note: closedDayForm.note || ''
+    }
+    await supabase.from('closed_days').insert(payload)
+    setClosedDayForm({ type: 'recurring', day_of_week: 1, specific_date: '', note: '' })
+    fetchClosedDays()
+  }
+
+  async function deleteClosedDay(id) {
+    await supabase.from('closed_days').delete().eq('id', id)
+    fetchClosedDays()
+  }
+
   function getWorkOrderGroups() {
     const map = {}
     orders.forEach(o => {
+      if (o.voided) return
       o.order_items.forEach(oi => {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
         const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-          const effectivePaid = o.paid || (o.credit_used || 0) >= subtotal
-          map[oi.menu_item_name].push({
-            customerName: o.customers?.name,
-            customerPhone: o.customers?.phone,
-            quantity: oi.quantity,
-            options: oi.order_item_options,
-            paid: o.paid,
-            effectivePaid,
-            orderId: o.id
-          })
+        const effectivePaid = o.paid || (o.credit_used || 0) >= subtotal
+        map[oi.menu_item_name].push({
+          customerName: o.customers?.name,
+          customerPhone: o.customers?.phone,
+          quantity: oi.quantity,
+          options: oi.order_item_options,
+          paid: o.paid,
+          effectivePaid,
+          orderId: o.id
+        })
       })
     })
     return map
@@ -272,7 +301,8 @@ function AdminPage() {
           quantity: oi.quantity,
           options: oi.order_item_options,
           paid: o.paid,
-          effectivePaid
+          effectivePaid,
+          voided: o.voided
         })
       })
     })
@@ -390,25 +420,21 @@ function AdminPage() {
   return (
     <div style={st.container}>
       <div style={st.card}>
-
         <div style={st.header}>
           <img src="https://haixnqmapezjikgpwjqh.supabase.co/storage/v1/object/public/assets/kopi%20ijo.png"
             alt="Kopi Ijø" style={{ height: '80px', objectFit: 'contain' }} />
         </div>
-
         <div style={st.greeting}>
           <div style={st.greetingName}>Admin Panel ⚙️</div>
           <div style={st.greetingMsg}>Kelola menu, pantau order, dan tagihan di sini.</div>
         </div>
-
         {error && <p style={st.error}>{error}</p>}
         {loading && <p style={{ color: '#5a5248', padding: '8px 16px', fontSize: '13px' }}>Memuat...</p>}
-
         <div style={st.tabs}>
-          {['workorder', 'history', 'billing', 'menu', 'options', 'payment', 'settings'].map(t => (
+          {['workorder', 'history', 'billing', 'menu', 'options', 'payment', 'jadwal', 'settings'].map(t => (
             <button key={t} style={{ ...st.tab, ...(tab === t ? st.tabActive : {}) }}
               onClick={() => { setTab(t); if (t === 'history') fetchHistoryOrders(historyDate, historyFilter) }}>
-              {{ workorder: '📋 Work Order', history: '📅 History', billing: '💰 Tagihan', menu: '☕ Menu', options: '🎛 Opsi', payment: '🏦 Rekening', settings: '⚙️ Setting' }[t]}
+              {{ workorder: '📋 Work Order', history: '📅 History', billing: '💰 Tagihan', menu: '☕ Menu', options: '🎛 Opsi', payment: '🏦 Rekening', jadwal: '🗓 Jadwal', settings: '⚙️ Setting' }[t]}
             </button>
           ))}
         </div>
@@ -419,9 +445,7 @@ function AdminPage() {
             <div>
               <div style={st.summaryBox}>
                 <strong style={{ color: '#1a3d2b' }}>Work Order</strong>
-                <div style={{ fontSize: '13px', color: '#1a3d2b', marginTop: '2px' }}>
-                  Delivery: <strong>{workDateLabel}</strong>
-                </div>
+                <div style={{ fontSize: '13px', color: '#1a3d2b', marginTop: '2px' }}>Delivery: <strong>{workDateLabel}</strong></div>
                 <div style={{ fontSize: '13px', color: '#5a5248', marginTop: '4px' }}>
                   Total terjual hari ini: <strong>{totalToday} item</strong>
                   {overGlobalLimit && <span style={{ color: '#c0392b', marginLeft: '8px' }}>⚠️ Melebihi limit ({globalLimitSaved})</span>}
@@ -433,9 +457,7 @@ function AdminPage() {
                   <button style={st.btnSmall} onClick={() => { localStorage.setItem('globalDailyLimit', globalLimit); setGlobalLimitSaved(globalLimit) }}>Simpan</button>
                 </div>
               </div>
-
               {Object.keys(workGroups).length === 0 && <p style={{ color: '#5a5248' }}>Belum ada order.</p>}
-
               {Object.entries(workGroups).map(([menuName, entries]) => (
                 <div key={menuName} style={st.workCard}>
                   <div style={st.workCardHeader}>
@@ -458,10 +480,16 @@ function AdminPage() {
                             </div>
                           )}
                         </div>
-                        <button style={{ ...st.btnSmall, background: entry.effectivePaid ? '#2d7a4f' : '#e67e22', minWidth: '100px' }}
-                          onClick={() => togglePaid(entry.orderId, entry.paid)}>
-                          {entry.effectivePaid ? '✓ Lunas' : 'Belum Bayar'}
-                        </button>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <button style={{ ...st.btnSmall, background: entry.effectivePaid ? '#2d7a4f' : '#e67e22', minWidth: '100px' }}
+                            onClick={() => togglePaid(entry.orderId, entry.paid)}>
+                            {entry.effectivePaid ? '✓ Lunas' : 'Belum Bayar'}
+                          </button>
+                          <button style={{ ...st.btnSmall, background: '#c0392b', minWidth: '100px' }}
+                            onClick={() => voidOrder(entry.orderId)}>
+                            Void
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -475,31 +503,25 @@ function AdminPage() {
               <div style={{ marginBottom: '16px' }}>
                 <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
                   <button style={{ ...st.btnSmall, background: historyFilter === 'untuk' ? '#1a3d2b' : '#d6cfc4', color: historyFilter === 'untuk' ? '#fff' : '#5a5248' }}
-                    onClick={() => { setHistoryFilter('untuk'); fetchHistoryOrders(historyDate, 'untuk') }}>
-                    Tanggal Delivery
-                  </button>
+                    onClick={() => { setHistoryFilter('untuk'); fetchHistoryOrders(historyDate, 'untuk') }}>Tanggal Delivery</button>
                   <button style={{ ...st.btnSmall, background: historyFilter === 'pesan' ? '#1a3d2b' : '#d6cfc4', color: historyFilter === 'pesan' ? '#fff' : '#5a5248' }}
-                    onClick={() => { setHistoryFilter('pesan'); fetchHistoryOrders(historyDate, 'pesan') }}>
-                    Tanggal Pesan
-                  </button>
+                    onClick={() => { setHistoryFilter('pesan'); fetchHistoryOrders(historyDate, 'pesan') }}>Tanggal Pesan</button>
                 </div>
                 <input style={st.input} type="date" value={historyDate}
                   onChange={e => { setHistoryDate(e.target.value); fetchHistoryOrders(e.target.value, historyFilter) }} />
               </div>
-
               {Object.keys(historyGroups).length === 0 && <p style={{ color: '#5a5248' }}>Tidak ada order di tanggal ini.</p>}
-
               {Object.entries(historyGroups).map(([menuName, entries]) => (
                 <div key={menuName} style={st.workCard}>
                   <div style={st.workCardHeader}>
                     <strong>{menuName}</strong>
-                    <span style={st.countBadge}>{entries.reduce((sum, e) => sum + e.quantity, 0)} cup</span>
+                    <span style={st.countBadge}>{entries.filter(e => !e.voided).reduce((sum, e) => sum + e.quantity, 0)} cup</span>
                   </div>
                   {entries.map((entry, i) => (
-                    <div key={i} style={st.workEntry}>
+                    <div key={i} style={{ ...st.workEntry, opacity: entry.voided ? 0.5 : 1 }}>
                       <div style={st.workEntryRow}>
                         <div>
-                          <span style={{ fontSize: '13px', fontWeight: '500', color: '#2c2c2a' }}>
+                          <span style={{ fontSize: '13px', fontWeight: '500', color: '#2c2c2a', textDecoration: entry.voided ? 'line-through' : 'none' }}>
                             {entry.quantity > 1 ? `${entry.quantity}x ` : ''}{entry.customerName}
                           </span>
                           {entry.options.length > 0 && (
@@ -510,8 +532,8 @@ function AdminPage() {
                             </div>
                           )}
                         </div>
-                        <span style={{ ...st.badge, background: entry.effectivePaid ? '#d4e8d8' : '#fef3e2', color: entry.effectivePaid ? '#1a3d2b' : '#e67e22' }}>
-                          {entry.effectivePaid ? '✓ Lunas' : '⏳ Belum'}
+                        <span style={{ ...st.badge, background: entry.voided ? '#f0f0f0' : entry.effectivePaid ? '#d4e8d8' : '#fef3e2', color: entry.voided ? '#888' : entry.effectivePaid ? '#1a3d2b' : '#e67e22' }}>
+                          {entry.voided ? '✕ Void' : entry.effectivePaid ? '✓ Lunas' : '⏳ Belum'}
                         </span>
                       </div>
                     </div>
@@ -524,12 +546,10 @@ function AdminPage() {
           {tab === 'billing' && (
             <div>
               <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Tagihan & Credit</h3>
-
               {allCustomers.map(customer => {
                 const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === customer.phone)
                 const unpaidTotal = unpaidOrders.reduce((sum, o) =>
                   sum + o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.credit_used || 0), 0)
-
                 return (
                   <div key={customer.id} style={{ ...st.itemCard, marginBottom: '10px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
@@ -543,49 +563,31 @@ function AdminPage() {
                         {unpaidTotal <= 0 && <div style={{ fontSize: '12px', color: '#1a3d2b' }}>✓ Lunas</div>}
                       </div>
                     </div>
-
                     <div style={{ borderTop: '0.5px solid #d6cfc4', paddingTop: '10px', marginBottom: '8px' }}>
                       <div style={{ fontSize: '12px', color: '#5a5248', marginBottom: '6px' }}>Top-up Credit:</div>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                        <input style={{ ...st.input, marginBottom: 0, flex: 1, minWidth: '80px' }}
-                          type="number" placeholder="Jumlah (Rp)"
-                          value={topUpAmount[customer.phone] || ''}
-                          onChange={e => setTopUpAmount(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
-                        <input style={{ ...st.input, marginBottom: 0, flex: 2, minWidth: '100px' }}
-                          type="text" placeholder="Catatan (opsional)"
-                          value={topUpNote[customer.phone] || ''}
-                          onChange={e => setTopUpNote(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
-                        <button style={{ ...st.btnSmall, background: '#1a3d2b' }}
-                          onClick={() => handleTopUp(customer.id, customer.phone)}>
-                          + Credit
-                        </button>
+                        <input style={{ ...st.input, marginBottom: 0, flex: 1, minWidth: '80px' }} type="number" placeholder="Jumlah (Rp)"
+                          value={topUpAmount[customer.phone] || ''} onChange={e => setTopUpAmount(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
+                        <input style={{ ...st.input, marginBottom: 0, flex: 2, minWidth: '100px' }} type="text" placeholder="Catatan (opsional)"
+                          value={topUpNote[customer.phone] || ''} onChange={e => setTopUpNote(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
+                        <button style={{ ...st.btnSmall, background: '#1a3d2b' }} onClick={() => handleTopUp(customer.id, customer.phone)}>+ Credit</button>
                       </div>
                     </div>
-
                     <div style={{ borderTop: '0.5px solid #d6cfc4', paddingTop: '10px', marginBottom: '8px' }}>
                       <div style={{ fontSize: '12px', color: '#5a5248', marginBottom: '6px' }}>Tagihan Manual:</div>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                        <input style={{ ...st.input, marginBottom: 0, flex: 1, minWidth: '80px' }}
-                          type="number" placeholder="Jumlah (Rp)"
-                          value={manualBillAmount[customer.phone] || ''}
-                          onChange={e => setManualBillAmount(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
-                        <input style={{ ...st.input, marginBottom: 0, flex: 2, minWidth: '100px' }}
-                          type="text" placeholder="Keterangan"
-                          value={manualBillNote[customer.phone] || ''}
-                          onChange={e => setManualBillNote(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
+                        <input style={{ ...st.input, marginBottom: 0, flex: 1, minWidth: '80px' }} type="number" placeholder="Jumlah (Rp)"
+                          value={manualBillAmount[customer.phone] || ''} onChange={e => setManualBillAmount(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
+                        <input style={{ ...st.input, marginBottom: 0, flex: 2, minWidth: '100px' }} type="text" placeholder="Keterangan"
+                          value={manualBillNote[customer.phone] || ''} onChange={e => setManualBillNote(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
                       </div>
                       <label style={{ ...st.checkRow, marginTop: '8px', fontSize: '12px' }}>
-                        <input type="checkbox"
-                          checked={manualBillUseCredit[customer.phone] ?? true}
+                        <input type="checkbox" checked={manualBillUseCredit[customer.phone] ?? true}
                           onChange={e => setManualBillUseCredit(prev => ({ ...prev, [customer.phone]: e.target.checked }))} />
                         Potong credit otomatis
                       </label>
-                      <button style={{ ...st.btnSmall, background: '#c0392b', marginTop: '4px' }}
-                        onClick={() => handleManualBill(customer.id, customer.phone)}>
-                        + Tagihan
-                      </button>
+                      <button style={{ ...st.btnSmall, background: '#c0392b', marginTop: '4px' }} onClick={() => handleManualBill(customer.id, customer.phone)}>+ Tagihan</button>
                     </div>
-
                     {(() => {
                       const allOrders = allUnpaidOrders.filter(o => o.customers?.phone === customer.phone)
                       if (allOrders.length === 0) return null
@@ -598,14 +600,14 @@ function AdminPage() {
                             const statusColor = o.paid ? '#1a3d2b' : lunasByCredit ? '#2d7a4f' : '#e67e22'
                             const statusLabel = o.paid ? '✓ Lunas' : lunasByCredit ? '✓ Lunas (Credit)' : '⏳ Belum Bayar'
                             const statusBg = o.paid || lunasByCredit ? '#d4e8d8' : '#fef3e2'
-
                             return (
                               <div key={o.id} style={{ marginBottom: '12px', background: '#fff', borderRadius: '8px', padding: '10px', border: `1.5px solid ${statusColor}` }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                   <span style={{ fontSize: '12px', color: '#888' }}>{formatTimestamp(o.created_at)}</span>
-                                  <span style={{ background: statusBg, color: statusColor, padding: '3px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: '500' }}>
-                                    {statusLabel}
-                                  </span>
+                                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                    <span style={{ background: statusBg, color: statusColor, padding: '3px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: '500' }}>{statusLabel}</span>
+                                    <button style={{ ...st.btnSmall, background: '#c0392b', padding: '3px 8px', fontSize: '11px' }} onClick={() => voidOrder(o.id)}>Void</button>
+                                  </div>
                                 </div>
                                 {o.order_items.map(oi => (
                                   <div key={oi.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#2c2c2a', padding: '2px 0' }}>
@@ -615,18 +617,15 @@ function AdminPage() {
                                 ))}
                                 <div style={{ borderTop: '0.5px solid #eee', marginTop: '6px', paddingTop: '6px' }}>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#5a5248' }}>
-                                    <span>Subtotal</span>
-                                    <span>Rp {subtotal.toLocaleString('id-ID')}</span>
+                                    <span>Subtotal</span><span>Rp {subtotal.toLocaleString('id-ID')}</span>
                                   </div>
                                   {o.credit_used > 0 && (
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#1a3d2b' }}>
-                                      <span>Credit dipakai</span>
-                                      <span>- Rp {o.credit_used.toLocaleString('id-ID')}</span>
+                                      <span>Credit dipakai</span><span>- Rp {o.credit_used.toLocaleString('id-ID')}</span>
                                     </div>
                                   )}
                                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 'bold', color: statusColor, marginTop: '4px' }}>
-                                    <span>Sisa Tagihan</span>
-                                    <span>Rp {sisaTagihan.toLocaleString('id-ID')}</span>
+                                    <span>Sisa Tagihan</span><span>Rp {sisaTagihan.toLocaleString('id-ID')}</span>
                                   </div>
                                 </div>
                               </div>
@@ -636,11 +635,8 @@ function AdminPage() {
                             <button style={{ ...st.btnSmall, background: '#2d7a4f', width: '100%', marginTop: '6px' }}
                               onClick={async () => {
                                 for (const o of allOrders) await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
-                                fetchAllUnpaid()
-                                fetchAllCustomers()
-                              }}>
-                              Tandai Semua Lunas
-                            </button>
+                                fetchAllUnpaid(); fetchAllCustomers()
+                              }}>Tandai Semua Lunas</button>
                           )}
                         </div>
                       )
@@ -703,7 +699,6 @@ function AdminPage() {
                   {editingMenu && <button style={st.btnOutline} onClick={resetMenuForm}>Batal</button>}
                 </div>
               </div>
-
               <h3 style={{ color: '#1a3d2b', margin: '20px 0 12px' }}>Daftar Menu</h3>
               {menuItems.map((item, idx) => (
                 <div key={item.id} style={{ ...st.itemCard, opacity: item.active ? 1 : 0.5 }}>
@@ -716,9 +711,7 @@ function AdminPage() {
                         {` · Terjual: ${dailyTotals[item.id] || 0}`}
                         {!item.active && ' · [nonaktif]'}
                       </div>
-                      <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>
-                        {item.available_days?.map(d => DAYS[d]).join(', ')}
-                      </div>
+                      <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>{item.available_days?.map(d => DAYS[d]).join(', ')}</div>
                     </div>
                     <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                       <button style={st.btnSmall} onClick={() => moveMenu(item.id, 'up')} disabled={idx === 0}>↑</button>
@@ -759,7 +752,6 @@ function AdminPage() {
                   {editingOg && <button style={st.btnOutline} onClick={resetOgForm}>Batal</button>}
                 </div>
               </div>
-
               <h3 style={{ color: '#1a3d2b', margin: '20px 0 12px' }}>Daftar Grup Opsi</h3>
               {optionGroups.map(og => (
                 <div key={og.id} style={st.itemCard}>
@@ -787,20 +779,15 @@ function AdminPage() {
             <div>
               <div style={st.sectionBox}>
                 <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>{editingPa ? 'Edit Rekening' : 'Tambah Rekening'}</h3>
-                <input style={st.input} placeholder="Nama Bank (misal: BCA, Mandiri, QRIS)" value={paForm.bank_name}
-                  onChange={e => setPaForm(f => ({ ...f, bank_name: e.target.value }))} />
-                <input style={st.input} placeholder="Nomor Rekening / Nomor QRIS" value={paForm.account_number}
-                  onChange={e => setPaForm(f => ({ ...f, account_number: e.target.value }))} />
-                <input style={st.input} placeholder="Nama Pemilik Rekening" value={paForm.account_name}
-                  onChange={e => setPaForm(f => ({ ...f, account_name: e.target.value }))} />
-                <input style={st.input} placeholder="Urutan tampil" type="number" value={paForm.sort_order}
-                  onChange={e => setPaForm(f => ({ ...f, sort_order: e.target.value }))} />
+                <input style={st.input} placeholder="Nama Bank (misal: BCA, Mandiri, QRIS)" value={paForm.bank_name} onChange={e => setPaForm(f => ({ ...f, bank_name: e.target.value }))} />
+                <input style={st.input} placeholder="Nomor Rekening / Nomor QRIS" value={paForm.account_number} onChange={e => setPaForm(f => ({ ...f, account_number: e.target.value }))} />
+                <input style={st.input} placeholder="Nama Pemilik Rekening" value={paForm.account_name} onChange={e => setPaForm(f => ({ ...f, account_name: e.target.value }))} />
+                <input style={st.input} placeholder="Urutan tampil" type="number" value={paForm.sort_order} onChange={e => setPaForm(f => ({ ...f, sort_order: e.target.value }))} />
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button style={st.btn} onClick={savePaymentAccount}>{editingPa ? 'Update' : 'Simpan'}</button>
                   {editingPa && <button style={st.btnOutline} onClick={() => { setPaForm({ bank_name: '', account_number: '', account_name: '', sort_order: 0 }); setEditingPa(null) }}>Batal</button>}
                 </div>
               </div>
-
               <h3 style={{ color: '#1a3d2b', margin: '20px 0 12px' }}>Daftar Rekening</h3>
               {paymentAccounts.length === 0 && <p style={{ color: '#5a5248' }}>Belum ada rekening.</p>}
               {paymentAccounts.map(pa => (
@@ -821,6 +808,51 @@ function AdminPage() {
             </div>
           )}
 
+          {tab === 'jadwal' && (
+            <div>
+              <div style={st.sectionBox}>
+                <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Tambah Hari Tutup</h3>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                  {[['recurring', 'Mingguan'], ['specific', 'Tanggal Tertentu']].map(([v, label]) => (
+                    <label key={v} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '13px', cursor: 'pointer' }}>
+                      <input type="radio" name="closedType" value={v} checked={closedDayForm.type === v}
+                        onChange={() => setClosedDayForm(f => ({ ...f, type: v }))} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                {closedDayForm.type === 'recurring' && (
+                  <select style={st.input} value={closedDayForm.day_of_week}
+                    onChange={e => setClosedDayForm(f => ({ ...f, day_of_week: e.target.value }))}>
+                    {DAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                  </select>
+                )}
+                {closedDayForm.type === 'specific' && (
+                  <input style={st.input} type="date" value={closedDayForm.specific_date}
+                    onChange={e => setClosedDayForm(f => ({ ...f, specific_date: e.target.value }))} />
+                )}
+                <input style={st.input} placeholder="Catatan (opsional)" value={closedDayForm.note}
+                  onChange={e => setClosedDayForm(f => ({ ...f, note: e.target.value }))} />
+                <button style={st.btn} onClick={saveClosedDay}>Simpan</button>
+              </div>
+              <h3 style={{ color: '#1a3d2b', margin: '20px 0 12px' }}>Daftar Hari Tutup</h3>
+              {closedDays.length === 0 && <p style={{ color: '#5a5248' }}>Belum ada hari tutup.</p>}
+              {closedDays.map(cd => (
+                <div key={cd.id} style={{ ...st.itemCard, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <strong style={{ color: '#2c2c2a', fontSize: '13px' }}>
+                      {cd.type === 'recurring'
+                        ? `Setiap ${DAYS[cd.day_of_week]}`
+                        : new Date(cd.specific_date + 'T00:00:00').toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
+                    </strong>
+                    {cd.note && <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>{cd.note}</div>}
+                  </div>
+                  <button style={{ ...st.btnSmall, background: '#c0392b' }} onClick={() => deleteClosedDay(cd.id)}>Hapus</button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {tab === 'settings' && (
             <div>
               <div style={st.sectionBox}>
@@ -828,15 +860,13 @@ function AdminPage() {
                 <label style={st.label}>Jam cutoff order — setelah jam ini, order masuk untuk besok</label>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '16px' }}>
                   <input style={{ ...st.input, marginBottom: 0, width: '80px' }} type="number" min="0" max="23"
-                    value={settingsForm.order_cutoff_hour}
-                    onChange={e => setSettingsForm(f => ({ ...f, order_cutoff_hour: e.target.value }))} />
+                    value={settingsForm.order_cutoff_hour} onChange={e => setSettingsForm(f => ({ ...f, order_cutoff_hour: e.target.value }))} />
                   <span style={{ fontSize: '13px', color: '#5a5248' }}>:00</span>
                 </div>
                 <label style={st.label}>Jam cutoff work order — sebelum jam ini, work order masih tampil untuk kemarin</label>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '16px' }}>
                   <input style={{ ...st.input, marginBottom: 0, width: '80px' }} type="number" min="0" max="23"
-                    value={settingsForm.workorder_cutoff_hour}
-                    onChange={e => setSettingsForm(f => ({ ...f, workorder_cutoff_hour: e.target.value }))} />
+                    value={settingsForm.workorder_cutoff_hour} onChange={e => setSettingsForm(f => ({ ...f, workorder_cutoff_hour: e.target.value }))} />
                   <span style={{ fontSize: '13px', color: '#5a5248' }}>:00</span>
                 </div>
                 <button style={st.btn} onClick={saveSettings}>Simpan Pengaturan</button>
