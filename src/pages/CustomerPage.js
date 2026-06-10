@@ -79,6 +79,8 @@ function CustomerPage() {
   const [orderTarget, setOrderTarget] = useState(getOrderTarget(7))
   const [isNextDay, setIsNextDay] = useState(false)
   const [todayIndex, setTodayIndex] = useState(getOrderTarget(7).getDay())
+  const [transferClaiming, setTransferClaiming] = useState(false)
+  const [transferClaimed, setTransferClaimed] = useState(false)
 
   useEffect(() => {
     async function loadSettings() {
@@ -138,7 +140,11 @@ function CustomerPage() {
       .select(`*, order_items(*, order_item_options(*))`)
       .eq('customer_id', customer.id)
       .order('created_at', { ascending: false })
-    if (data) setOrders(data)
+    if (data) {
+      setOrders(data)
+      const hasClaimed = data.some(o => !o.paid && !o.voided && o.transfer_claimed)
+      setTransferClaimed(hasClaimed)
+    }
     refreshCustomer()
   }
 
@@ -146,6 +152,17 @@ function CustomerPage() {
     if (!customer) return
     const { data } = await supabase.from('customers').select('*').eq('id', customer.id).single()
     if (data) setCustomer(data)
+  }
+
+  async function handleTransferClaim() {
+    setTransferClaiming(true)
+    const unpaidOrders = orders.filter(o => !o.paid && !o.voided && !o.transfer_claimed)
+    for (const o of unpaidOrders) {
+      await supabase.from('orders').update({ transfer_claimed: true, transfer_claimed_at: new Date().toISOString() }).eq('id', o.id)
+    }
+    setTransferClaiming(false)
+    setTransferClaimed(true)
+    fetchMyOrders()
   }
 
   async function handlePhoneSubmit() {
@@ -253,7 +270,6 @@ function CustomerPage() {
   const now = new Date()
   const todayStr = now.toLocaleDateString('en-CA')
   const targetStr = orderTarget.toLocaleDateString('en-CA')
-  const isClosed = isDateClosed(orderTarget, closedDays)
 
   if (orderSuccess) return (
     <div style={st.container}>
@@ -434,6 +450,7 @@ function CustomerPage() {
                       const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
                       return sum + Math.max(0, subtotal - (o.credit_used || 0))
                     }, 0)
+                  const hasUnclaimed = orders.some(o => !o.paid && !o.voided && !o.transfer_claimed)
                   return (
                     <>
                       <div style={{ ...st.metricCard, marginBottom: '12px' }}>
@@ -448,6 +465,7 @@ function CustomerPage() {
                           </div>
                         )}
                       </div>
+
                       {paymentAccounts.length > 0 && totalBelumBayar > 0 && (
                         <div style={{ background: '#f7f3ee', border: '0.5px solid #d6cfc4', borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
                           <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3d2b', marginBottom: '10px' }}>💳 Info Pembayaran</div>
@@ -459,7 +477,16 @@ function CustomerPage() {
                               <div style={{ fontSize: '12px', color: '#5a5248', marginTop: '2px' }}>a.n. {pa.account_name}</div>
                             </div>
                           ))}
-                          <div style={{ fontSize: '11px', color: '#888', marginTop: '6px' }}>Setelah transfer, konfirmasi ke kami via WhatsApp ya! 🙏</div>
+                          {transferClaimed && !hasUnclaimed ? (
+                            <div style={{ marginTop: '10px', background: '#d4e8d8', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#1a3d2b', textAlign: 'center' }}>
+                              ✓ Konfirmasi transfer sudah terkirim — menunggu verifikasi
+                            </div>
+                          ) : (
+                            <button style={{ ...st.btn, marginTop: '10px', background: '#2d7a4f' }}
+                              onClick={handleTransferClaim} disabled={transferClaiming}>
+                              {transferClaiming ? 'Mengirim...' : '💸 Sudah Transfer'}
+                            </button>
+                          )}
                         </div>
                       )}
                     </>
@@ -471,7 +498,7 @@ function CustomerPage() {
                   const isExpanded = expandedOrder === o.id
                   const sisaTagihan = Math.max(0, orderTotal - (o.credit_used || 0))
                   const effectivePaid = o.paid || sisaTagihan === 0
-                  const borderColor = o.voided ? '#ccc' : effectivePaid ? '#1a3d2b' : '#e67e22'
+                  const borderColor = o.voided ? '#ccc' : effectivePaid ? '#1a3d2b' : o.transfer_claimed ? '#2d7a4f' : '#e67e22'
                   return (
                     <div key={o.id} style={{ ...st.orderCard, borderLeft: `4px solid ${borderColor}`, opacity: o.voided ? 0.6 : 1 }}>
                       <div style={{ ...st.orderHeader, cursor: 'pointer' }} onClick={() => setExpandedOrder(isExpanded ? null : o.id)}>
@@ -497,8 +524,11 @@ function CustomerPage() {
                           )}
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-                          <span style={{ ...st.badge, background: o.voided ? '#f0f0f0' : effectivePaid ? '#d4e8d8' : '#fef3e2', color: o.voided ? '#888' : effectivePaid ? '#1a3d2b' : '#e67e22' }}>
-                            {o.voided ? '✕ Void' : effectivePaid ? '✓ Lunas' : '⏳ Belum Bayar'}
+                          <span style={{ ...st.badge,
+                            background: o.voided ? '#f0f0f0' : effectivePaid ? '#d4e8d8' : o.transfer_claimed ? '#e8f5e9' : '#fef3e2',
+                            color: o.voided ? '#888' : effectivePaid ? '#1a3d2b' : o.transfer_claimed ? '#2d7a4f' : '#e67e22'
+                          }}>
+                            {o.voided ? '✕ Void' : effectivePaid ? '✓ Lunas' : o.transfer_claimed ? '💸 Menunggu' : '⏳ Belum Bayar'}
                           </span>
                           <span style={{ fontSize: '11px', color: '#888' }}>{isExpanded ? '▲ tutup' : '▼ detail'}</span>
                         </div>

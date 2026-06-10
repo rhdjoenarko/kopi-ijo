@@ -39,14 +39,11 @@ function AdminPage() {
   const [closedDays, setClosedDays] = useState([])
   const [closedDayForm, setClosedDayForm] = useState({ type: 'recurring', day_of_week: 1, specific_date: '', note: '' })
   const [workDateLabel, setWorkDateLabel] = useState('')
-
   const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '' })
   const [menuFormGroups, setMenuFormGroups] = useState([])
   const [editingMenu, setEditingMenu] = useState(null)
-
   const [ogForm, setOgForm] = useState({ name: '', required: true, choices: [{ label: '', price_addition: 0 }] })
   const [editingOg, setEditingOg] = useState(null)
-
   const [globalLimit, setGlobalLimit] = useState('')
   const [globalLimitSaved, setGlobalLimitSaved] = useState(localStorage.getItem('globalDailyLimit') || '')
 
@@ -71,8 +68,7 @@ function AdminPage() {
 
   const fetchWorkOrders = useCallback(async () => {
     const { data: settingsData } = await supabase.from('settings').select('*')
-    let cutoffOrder = 7
-    let cutoffWork = 9
+    let cutoffOrder = 7, cutoffWork = 9
     if (settingsData) {
       const map = {}
       settingsData.forEach(d => { map[d.key] = parseInt(d.value) })
@@ -102,11 +98,8 @@ function AdminPage() {
 
   const fetchHistoryOrders = useCallback(async (dateStr, filterType) => {
     let query = supabase.from('orders').select(`*, customers(name, phone), order_items(*, order_item_options(*))`)
-    if (filterType === 'untuk') {
-      query = query.eq('order_for_date', dateStr)
-    } else {
-      query = query.gte('created_at', `${dateStr}T00:00:00`).lt('created_at', `${dateStr}T23:59:59`)
-    }
+    if (filterType === 'untuk') query = query.eq('order_for_date', dateStr)
+    else query = query.gte('created_at', `${dateStr}T00:00:00`).lt('created_at', `${dateStr}T23:59:59`)
     const { data } = await query.order('created_at', { ascending: true })
     if (data) setHistoryOrders(data)
   }, [])
@@ -159,10 +152,7 @@ function AdminPage() {
     const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === phone)
     for (const o of unpaidOrders) {
       const orderBill = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.credit_used || 0)
-      if (orderBill <= 0) {
-        await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
-        continue
-      }
+      if (orderBill <= 0) { await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id); continue }
       if (remainingCredit >= orderBill) {
         remainingCredit -= orderBill
         await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
@@ -174,8 +164,7 @@ function AdminPage() {
     await supabase.from('customers').update({ credit_balance: remainingCredit }).eq('id', customerId)
     setTopUpAmount(prev => ({ ...prev, [phone]: '' }))
     setTopUpNote(prev => ({ ...prev, [phone]: '' }))
-    fetchAllCustomers()
-    fetchAllUnpaid()
+    fetchAllCustomers(); fetchAllUnpaid()
   }
 
   async function handleManualBill(customerId, phone) {
@@ -191,23 +180,16 @@ function AdminPage() {
     }
     const isPaid = creditUsed >= amount
     const { data: order } = await supabase.from('orders').insert({
-      customer_id: customerId,
-      order_for_date: new Date().toLocaleDateString('en-CA'),
-      credit_used: creditUsed,
-      paid: isPaid,
-      voided: false,
+      customer_id: customerId, order_for_date: new Date().toLocaleDateString('en-CA'),
+      credit_used: creditUsed, paid: isPaid, voided: false,
       paid_at: isPaid ? new Date().toISOString() : null
     }).select().single()
     if (order) {
-      await supabase.from('order_items').insert({
-        order_id: order.id, menu_item_id: null,
-        menu_item_name: note, price_at_order: amount, quantity: 1
-      })
+      await supabase.from('order_items').insert({ order_id: order.id, menu_item_id: null, menu_item_name: note, price_at_order: amount, quantity: 1 })
     }
     setManualBillAmount(prev => ({ ...prev, [phone]: '' }))
     setManualBillNote(prev => ({ ...prev, [phone]: '' }))
-    fetchAllCustomers()
-    fetchAllUnpaid()
+    fetchAllCustomers(); fetchAllUnpaid()
   }
 
   async function voidOrder(orderId) {
@@ -219,25 +201,17 @@ function AdminPage() {
       await supabase.from('customers').update({ credit_balance: (cust?.credit_balance || 0) + order.credit_used }).eq('id', order.customer_id)
     }
     await supabase.from('orders').update({ voided: true, voided_at: new Date().toISOString() }).eq('id', orderId)
-    fetchAllUnpaid()
-    fetchAllCustomers()
-    fetchWorkOrders()
+    fetchAllUnpaid(); fetchAllCustomers(); fetchWorkOrders()
   }
 
   async function savePaymentAccount() {
-    if (!paForm.bank_name.trim() || !paForm.account_number.trim() || !paForm.account_name.trim()) {
-      setError('Semua field rekening wajib diisi.'); return
-    }
+    if (!paForm.bank_name.trim() || !paForm.account_number.trim() || !paForm.account_name.trim()) { setError('Semua field rekening wajib diisi.'); return }
     setError('')
     const payload = { bank_name: paForm.bank_name.trim(), account_number: paForm.account_number.trim(), account_name: paForm.account_name.trim(), sort_order: parseInt(paForm.sort_order) || 0, active: true }
-    if (editingPa) {
-      await supabase.from('payment_accounts').update(payload).eq('id', editingPa)
-    } else {
-      await supabase.from('payment_accounts').insert(payload)
-    }
+    if (editingPa) await supabase.from('payment_accounts').update(payload).eq('id', editingPa)
+    else await supabase.from('payment_accounts').insert(payload)
     setPaForm({ bank_name: '', account_number: '', account_name: '', sort_order: 0 })
-    setEditingPa(null)
-    fetchPaymentAccounts()
+    setEditingPa(null); fetchPaymentAccounts()
   }
 
   async function deletePaymentAccount(id) {
@@ -247,17 +221,14 @@ function AdminPage() {
   }
 
   async function saveClosedDay() {
-    if (closedDayForm.type === 'specific' && !closedDayForm.specific_date) {
-      setError('Pilih tanggal tutup.'); return
-    }
+    if (closedDayForm.type === 'specific' && !closedDayForm.specific_date) { setError('Pilih tanggal tutup.'); return }
     setError('')
-    const payload = {
+    await supabase.from('closed_days').insert({
       type: closedDayForm.type,
       day_of_week: closedDayForm.type === 'recurring' ? parseInt(closedDayForm.day_of_week) : null,
       specific_date: closedDayForm.type === 'specific' ? closedDayForm.specific_date : null,
       note: closedDayForm.note || ''
-    }
-    await supabase.from('closed_days').insert(payload)
+    })
     setClosedDayForm({ type: 'recurring', day_of_week: 1, specific_date: '', note: '' })
     fetchClosedDays()
   }
@@ -275,15 +246,7 @@ function AdminPage() {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
         const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
         const effectivePaid = o.paid || (o.credit_used || 0) >= subtotal
-        map[oi.menu_item_name].push({
-          customerName: o.customers?.name,
-          customerPhone: o.customers?.phone,
-          quantity: oi.quantity,
-          options: oi.order_item_options,
-          paid: o.paid,
-          effectivePaid,
-          orderId: o.id
-        })
+        map[oi.menu_item_name].push({ customerName: o.customers?.name, customerPhone: o.customers?.phone, quantity: oi.quantity, options: oi.order_item_options, paid: o.paid, effectivePaid, transferClaimed: o.transfer_claimed, orderId: o.id })
       })
     })
     return map
@@ -296,21 +259,14 @@ function AdminPage() {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
         const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
         const effectivePaid = o.paid || (o.credit_used || 0) >= subtotal
-        map[oi.menu_item_name].push({
-          customerName: o.customers?.name,
-          quantity: oi.quantity,
-          options: oi.order_item_options,
-          paid: o.paid,
-          effectivePaid,
-          voided: o.voided
-        })
+        map[oi.menu_item_name].push({ customerName: o.customers?.name, quantity: oi.quantity, options: oi.order_item_options, paid: o.paid, effectivePaid, transferClaimed: o.transfer_claimed, voided: o.voided })
       })
     })
     return map
   }
 
   async function togglePaid(orderId, currentPaid) {
-    await supabase.from('orders').update({ paid: !currentPaid, paid_at: !currentPaid ? new Date().toISOString() : null }).eq('id', orderId)
+    await supabase.from('orders').update({ paid: !currentPaid, paid_at: !currentPaid ? new Date().toISOString() : null, transfer_claimed: false }).eq('id', orderId)
     fetchWorkOrders()
   }
 
@@ -330,8 +286,7 @@ function AdminPage() {
 
   function resetMenuForm() {
     setMenuForm({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '' })
-    setMenuFormGroups([])
-    setEditingMenu(null)
+    setMenuFormGroups([]); setEditingMenu(null)
   }
 
   function startEditMenu(item) {
@@ -357,9 +312,7 @@ function AdminPage() {
       const { data } = await supabase.from('menu_items').insert(payload).select().single()
       menuId = data.id
     }
-    if (menuFormGroups.length > 0) {
-      await supabase.from('menu_item_option_groups').insert(menuFormGroups.map(gid => ({ menu_item_id: menuId, option_group_id: gid })))
-    }
+    if (menuFormGroups.length > 0) await supabase.from('menu_item_option_groups').insert(menuFormGroups.map(gid => ({ menu_item_id: menuId, option_group_id: gid })))
     resetMenuForm(); fetchMenu()
   }
 
@@ -373,8 +326,7 @@ function AdminPage() {
     const idx = menuItems.findIndex(m => m.id === id)
     const swapIdx = direction === 'up' ? idx - 1 : idx + 1
     if (swapIdx < 0 || swapIdx >= menuItems.length) return
-    const a = menuItems[idx]
-    const b = menuItems[swapIdx]
+    const a = menuItems[idx], b = menuItems[swapIdx]
     await supabase.from('menu_items').update({ sort_order: swapIdx }).eq('id', a.id)
     await supabase.from('menu_items').update({ sort_order: idx }).eq('id', b.id)
     fetchMenu()
@@ -411,6 +363,13 @@ function AdminPage() {
     fetchOptionGroups()
   }
 
+  function getStatusBadge(entry) {
+    if (entry.voided) return { label: '✕ Void', bg: '#f0f0f0', color: '#888' }
+    if (entry.effectivePaid || entry.paid) return { label: '✓ Lunas', bg: '#d4e8d8', color: '#1a3d2b' }
+    if (entry.transferClaimed) return { label: '💸 Transfer', bg: '#fff3cd', color: '#856404' }
+    return { label: '⏳ Belum', bg: '#fef3e2', color: '#e67e22' }
+  }
+
   const totalToday = Object.values(dailyTotals).reduce((a, b) => a + Number(b), 0)
   const globalLimitNum = parseInt(globalLimitSaved) || null
   const overGlobalLimit = globalLimitNum && totalToday > globalLimitNum
@@ -430,6 +389,7 @@ function AdminPage() {
         </div>
         {error && <p style={st.error}>{error}</p>}
         {loading && <p style={{ color: '#5a5248', padding: '8px 16px', fontSize: '13px' }}>Memuat...</p>}
+
         <div style={st.tabs}>
           {['workorder', 'history', 'billing', 'menu', 'options', 'payment', 'jadwal', 'settings'].map(t => (
             <button key={t} style={{ ...st.tab, ...(tab === t ? st.tabActive : {}) }}
@@ -464,35 +424,39 @@ function AdminPage() {
                     <strong>{menuName}</strong>
                     <span style={st.countBadge}>{entries.reduce((sum, e) => sum + e.quantity, 0)} cup</span>
                   </div>
-                  {entries.map((entry, i) => (
-                    <div key={i} style={st.workEntry}>
-                      <div style={st.workEntryRow}>
-                        <div>
-                          <span style={{ fontSize: '13px', fontWeight: '500', color: '#2c2c2a' }}>
-                            {entry.quantity > 1 ? `${entry.quantity}x ` : ''}{entry.customerName}
-                          </span>
-                          <span style={{ fontSize: '12px', color: '#888', marginLeft: '6px' }}>{entry.customerPhone}</span>
-                          {entry.options.length > 0 && (
-                            <div style={st.optionTags}>
-                              {entry.options.map(opt => (
-                                <span key={opt.id} style={st.tag}>{opt.option_group_name}: {opt.option_choice_label}</span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          <button style={{ ...st.btnSmall, background: entry.effectivePaid ? '#2d7a4f' : '#e67e22', minWidth: '100px' }}
-                            onClick={() => togglePaid(entry.orderId, entry.paid)}>
-                            {entry.effectivePaid ? '✓ Lunas' : 'Belum Bayar'}
-                          </button>
-                          <button style={{ ...st.btnSmall, background: '#c0392b', minWidth: '100px' }}
-                            onClick={() => voidOrder(entry.orderId)}>
-                            Void
-                          </button>
+                  {entries.map((entry, i) => {
+                    const badge = getStatusBadge(entry)
+                    return (
+                      <div key={i} style={st.workEntry}>
+                        <div style={st.workEntryRow}>
+                          <div>
+                            <span style={{ fontSize: '13px', fontWeight: '500', color: '#2c2c2a' }}>
+                              {entry.quantity > 1 ? `${entry.quantity}x ` : ''}{entry.customerName}
+                            </span>
+                            <span style={{ fontSize: '12px', color: '#888', marginLeft: '6px' }}>{entry.customerPhone}</span>
+                            {entry.options.length > 0 && (
+                              <div style={st.optionTags}>
+                                {entry.options.map(opt => (
+                                  <span key={opt.id} style={st.tag}>{opt.option_group_name}: {opt.option_choice_label}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end' }}>
+                            <span style={{ ...st.badge, background: badge.bg, color: badge.color }}>{badge.label}</span>
+                            <button style={{ ...st.btnSmall, background: entry.effectivePaid ? '#2d7a4f' : '#e67e22', minWidth: '90px' }}
+                              onClick={() => togglePaid(entry.orderId, entry.paid)}>
+                              {entry.effectivePaid ? '✓ Konfirmasi' : 'Tandai Lunas'}
+                            </button>
+                            <button style={{ ...st.btnSmall, background: '#c0392b', minWidth: '90px' }}
+                              onClick={() => voidOrder(entry.orderId)}>
+                              Void
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               ))}
             </div>
@@ -517,27 +481,28 @@ function AdminPage() {
                     <strong>{menuName}</strong>
                     <span style={st.countBadge}>{entries.filter(e => !e.voided).reduce((sum, e) => sum + e.quantity, 0)} cup</span>
                   </div>
-                  {entries.map((entry, i) => (
-                    <div key={i} style={{ ...st.workEntry, opacity: entry.voided ? 0.5 : 1 }}>
-                      <div style={st.workEntryRow}>
-                        <div>
-                          <span style={{ fontSize: '13px', fontWeight: '500', color: '#2c2c2a', textDecoration: entry.voided ? 'line-through' : 'none' }}>
-                            {entry.quantity > 1 ? `${entry.quantity}x ` : ''}{entry.customerName}
-                          </span>
-                          {entry.options.length > 0 && (
-                            <div style={st.optionTags}>
-                              {entry.options.map(opt => (
-                                <span key={opt.id} style={st.tag}>{opt.option_group_name}: {opt.option_choice_label}</span>
-                              ))}
-                            </div>
-                          )}
+                  {entries.map((entry, i) => {
+                    const badge = getStatusBadge(entry)
+                    return (
+                      <div key={i} style={{ ...st.workEntry, opacity: entry.voided ? 0.5 : 1 }}>
+                        <div style={st.workEntryRow}>
+                          <div>
+                            <span style={{ fontSize: '13px', fontWeight: '500', color: '#2c2c2a', textDecoration: entry.voided ? 'line-through' : 'none' }}>
+                              {entry.quantity > 1 ? `${entry.quantity}x ` : ''}{entry.customerName}
+                            </span>
+                            {entry.options.length > 0 && (
+                              <div style={st.optionTags}>
+                                {entry.options.map(opt => (
+                                  <span key={opt.id} style={st.tag}>{opt.option_group_name}: {opt.option_choice_label}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <span style={{ ...st.badge, background: badge.bg, color: badge.color }}>{badge.label}</span>
                         </div>
-                        <span style={{ ...st.badge, background: entry.voided ? '#f0f0f0' : entry.effectivePaid ? '#d4e8d8' : '#fef3e2', color: entry.voided ? '#888' : entry.effectivePaid ? '#1a3d2b' : '#e67e22' }}>
-                          {entry.voided ? '✕ Void' : entry.effectivePaid ? '✓ Lunas' : '⏳ Belum'}
-                        </span>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               ))}
             </div>
@@ -550,12 +515,14 @@ function AdminPage() {
                 const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === customer.phone)
                 const unpaidTotal = unpaidOrders.reduce((sum, o) =>
                   sum + o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.credit_used || 0), 0)
+                const hasTransferClaim = unpaidOrders.some(o => o.transfer_claimed)
                 return (
-                  <div key={customer.id} style={{ ...st.itemCard, marginBottom: '10px' }}>
+                  <div key={customer.id} style={{ ...st.itemCard, marginBottom: '10px', borderColor: hasTransferClaim ? '#856404' : '#d6cfc4', borderWidth: hasTransferClaim ? '1.5px' : '0.5px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
                       <div>
                         <strong style={{ color: '#2c2c2a' }}>{customer.name}</strong>
                         <div style={{ fontSize: '12px', color: '#888' }}>{customer.phone}</div>
+                        {hasTransferClaim && <div style={{ fontSize: '12px', color: '#856404', marginTop: '4px', fontWeight: '500' }}>💸 Klaim sudah transfer</div>}
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '12px', color: '#1a3d2b' }}>Credit: <strong>Rp {(customer.credit_balance || 0).toLocaleString('id-ID')}</strong></div>
@@ -597,9 +564,9 @@ function AdminPage() {
                             const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
                             const sisaTagihan = Math.max(0, subtotal - (o.credit_used || 0))
                             const lunasByCredit = !o.paid && sisaTagihan === 0
-                            const statusColor = o.paid ? '#1a3d2b' : lunasByCredit ? '#2d7a4f' : '#e67e22'
-                            const statusLabel = o.paid ? '✓ Lunas' : lunasByCredit ? '✓ Lunas (Credit)' : '⏳ Belum Bayar'
-                            const statusBg = o.paid || lunasByCredit ? '#d4e8d8' : '#fef3e2'
+                            const statusColor = o.paid ? '#1a3d2b' : lunasByCredit ? '#2d7a4f' : o.transfer_claimed ? '#856404' : '#e67e22'
+                            const statusLabel = o.paid ? '✓ Lunas' : lunasByCredit ? '✓ Lunas (Credit)' : o.transfer_claimed ? '💸 Klaim Transfer' : '⏳ Belum Bayar'
+                            const statusBg = o.paid || lunasByCredit ? '#d4e8d8' : o.transfer_claimed ? '#fff3cd' : '#fef3e2'
                             return (
                               <div key={o.id} style={{ marginBottom: '12px', background: '#fff', borderRadius: '8px', padding: '10px', border: `1.5px solid ${statusColor}` }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -634,7 +601,7 @@ function AdminPage() {
                           {allOrders.some(o => !o.paid && Math.max(0, o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.credit_used || 0)) > 0) && (
                             <button style={{ ...st.btnSmall, background: '#2d7a4f', width: '100%', marginTop: '6px' }}
                               onClick={async () => {
-                                for (const o of allOrders) await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
+                                for (const o of allOrders) await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString(), transfer_claimed: false }).eq('id', o.id)
                                 fetchAllUnpaid(); fetchAllCustomers()
                               }}>Tandai Semua Lunas</button>
                           )}
@@ -676,9 +643,7 @@ function AdminPage() {
                 <label style={st.label}>Tersedia hari:</label>
                 <div style={st.dayRow}>
                   {DAYS.map((d, i) => (
-                    <button key={i} style={{ ...st.dayBtn, ...(menuForm.available_days.includes(i) ? st.dayBtnActive : {}) }} onClick={() => toggleDay(i)}>
-                      {d.slice(0, 3)}
-                    </button>
+                    <button key={i} style={{ ...st.dayBtn, ...(menuForm.available_days.includes(i) ? st.dayBtnActive : {}) }} onClick={() => toggleDay(i)}>{d.slice(0, 3)}</button>
                   ))}
                 </div>
                 <label style={{ ...st.label, marginTop: '12px' }}>Grup opsi:</label>
@@ -841,9 +806,7 @@ function AdminPage() {
                 <div key={cd.id} style={{ ...st.itemCard, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <strong style={{ color: '#2c2c2a', fontSize: '13px' }}>
-                      {cd.type === 'recurring'
-                        ? `Setiap ${DAYS[cd.day_of_week]}`
-                        : new Date(cd.specific_date + 'T00:00:00').toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
+                      {cd.type === 'recurring' ? `Setiap ${DAYS[cd.day_of_week]}` : new Date(cd.specific_date + 'T00:00:00').toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
                     </strong>
                     {cd.note && <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>{cd.note}</div>}
                   </div>
@@ -914,7 +877,6 @@ const st = {
   workEntryRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' },
   countBadge: { background: 'rgba(255,255,255,0.2)', padding: '3px 10px', borderRadius: '20px', fontSize: '12px' },
   itemCard: { background: '#f7f3ee', border: '0.5px solid #d6cfc4', borderRadius: '8px', padding: '12px', marginBottom: '8px' },
-  billingCard: { background: '#f7f3ee', border: '1.5px solid #e67e22', borderRadius: '10px', padding: '14px', marginBottom: '10px' },
   optionTags: { display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' },
   tag: { background: '#d4e8d8', color: '#1a3d2b', padding: '2px 8px', borderRadius: '20px', fontSize: '12px' },
   badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '500' },
