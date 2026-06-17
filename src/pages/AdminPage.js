@@ -110,7 +110,7 @@ function AdminPage() {
       .select(`*, customers(name, phone), order_items(*, order_item_options(*))`)
       .eq('paid', false)
       .eq('voided', false)
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: true })
     if (data) setAllUnpaidOrders(data)
   }, [])
 
