@@ -594,6 +594,15 @@ function AdminPage() {
                                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 'bold', color: statusColor, marginTop: '4px' }}>
                                     <span>Sisa Tagihan</span><span>Rp {sisaTagihan.toLocaleString('id-ID')}</span>
                                   </div>
+                                  {!o.paid && sisaTagihan > 0 && (
+                                    <button style={{ ...st.btnSmall, background: '#2d7a4f', width: '100%', marginTop: '8px' }}
+                                      onClick={async () => {
+                                        await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
+                                        fetchAllUnpaid(); fetchAllCustomers()
+                                      }}>
+                                      Tandai Lunas
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             )
