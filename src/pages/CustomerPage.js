@@ -264,7 +264,7 @@ function CustomerPage() {
         }))
       if (optionInserts.length > 0) await supabase.from('order_item_options').insert(optionInserts)
     }
-    setLoading(false); setOrderSuccess(true); setCart([]); fetchMyOrders(); refreshCustomer()
+    setLoading(false); setOrderSuccess(true); setCart([]); setActiveTab('riwayat'); fetchMyOrders(); refreshCustomer()
   }
 
   const now = new Date()
@@ -380,7 +380,13 @@ function CustomerPage() {
                 })}
 
                 {cart.length > 0 && (
-                  <div style={st.cartBox}>
+                  <button style={st.floatingCartBtn} onClick={() => document.getElementById('cart-section')?.scrollIntoView({ behavior: 'smooth' })}>
+                    🛒 Lihat Keranjang ({cart.reduce((sum, c) => sum + c.quantity, 0)}) · Rp {total.toLocaleString('id-ID')}
+                  </button>
+                )}
+
+                {cart.length > 0 && (
+                  <div id="cart-section" style={st.cartBox}>
                     <div style={st.cartHeader}>
                       <span>🛒</span>
                       <span style={{ letterSpacing: '0.5px' }}>KERANJANG</span>
@@ -627,6 +633,7 @@ const st = {
   addBtn: { padding: '6px 12px', background: '#1a3d2b', color: '#e8f0e2', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', whiteSpace: 'nowrap' },
   addBtnDisabled: { background: '#ccc', cursor: 'not-allowed' },
   cartBox: { border: '1.5px solid #1a3d2b', borderRadius: '10px', overflow: 'hidden', marginTop: '16px' },
+  floatingCartBtn: { position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)', width: 'calc(100% - 40px)', maxWidth: '440px', padding: '14px', background: '#1a3d2b', color: '#e8f0e2', border: 'none', borderRadius: '12px', fontSize: '14px', fontWeight: '500', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', zIndex: 50 },
   cartHeader: { background: '#1a3d2b', padding: '9px 12px', display: 'flex', alignItems: 'center', gap: '8px', color: '#e8f0e2', fontSize: '13px', fontWeight: '500' },
   cartItem: { background: '#ede8df', border: '0.5px solid #d6cfc4', borderRadius: '7px', padding: '10px', marginBottom: '8px' },
   optionLabel: { fontSize: '12px', color: '#5a5248', display: 'block', marginBottom: '4px' },
