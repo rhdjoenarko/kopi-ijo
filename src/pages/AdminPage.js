@@ -38,13 +38,9 @@ function AdminPage() {
   const [editingPa, setEditingPa] = useState(null)
   const [closedDays, setClosedDays] = useState([])
   const [closedDayForm, setClosedDayForm] = useState({ type: 'recurring', day_of_week: 1, specific_date: '', note: '' })
-  const [adminOrderCustomerId, setAdminOrderCustomerId] = useState('')
-  const [adminOrderNewPhone, setAdminOrderNewPhone] = useState('')
-  const [adminOrderNewName, setAdminOrderNewName] = useState('')
-  const [adminOrderIsNew, setAdminOrderIsNew] = useState(false)
-  const [adminOrderDate, setAdminOrderDate] = useState(() => new Date().toLocaleDateString('en-CA'))
-  const [adminCart, setAdminCart] = useState([])
   const [adminMenuFull, setAdminMenuFull] = useState([])
+  // dateGroups: [{ id, date, customerGroups: [{ id, customerId, isNew, newPhone, newName, items: [{ cartId, item, selectedOptions, quantity }] }] }]
+  const [dateGroups, setDateGroups] = useState([])
   const [workDateLabel, setWorkDateLabel] = useState('')
   const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '' })
   const [menuFormGroups, setMenuFormGroups] = useState([])
@@ -227,92 +223,155 @@ function AdminPage() {
     fetchAllUnpaid(); fetchAllCustomers(); fetchWorkOrders()
   }
 
-  function addToAdminCart(item) {
+  function addDateGroup() {
+    setDateGroups(prev => [...prev, {
+      id: Date.now(),
+      date: new Date().toLocaleDateString('en-CA'),
+      customerGroups: []
+    }])
+  }
+
+  function removeDateGroup(groupId) {
+    setDateGroups(prev => prev.filter(g => g.id !== groupId))
+  }
+
+  function updateDateGroupDate(groupId, date) {
+    setDateGroups(prev => prev.map(g => g.id === groupId ? { ...g, date } : g))
+  }
+
+  function addCustomerGroup(dateGroupId) {
+    setDateGroups(prev => prev.map(g => g.id === dateGroupId ? {
+      ...g,
+      customerGroups: [...g.customerGroups, { id: Date.now(), customerId: '', isNew: false, newPhone: '', newName: '', items: [] }]
+    } : g))
+  }
+
+  function removeCustomerGroup(dateGroupId, custGroupId) {
+    setDateGroups(prev => prev.map(g => g.id === dateGroupId ? {
+      ...g,
+      customerGroups: g.customerGroups.filter(cg => cg.id !== custGroupId)
+    } : g))
+  }
+
+  function updateCustomerGroup(dateGroupId, custGroupId, updates) {
+    setDateGroups(prev => prev.map(g => g.id === dateGroupId ? {
+      ...g,
+      customerGroups: g.customerGroups.map(cg => cg.id === custGroupId ? { ...cg, ...updates } : cg)
+    } : g))
+  }
+
+  function addItemToCustomerGroup(dateGroupId, custGroupId, item) {
     const defaultOptions = {}
     item.optionGroups.forEach(og => {
       if (og.required && og.choices.length > 0) defaultOptions[og.id] = og.choices[0]
     })
-    setAdminCart(prev => [...prev, { item, selectedOptions: defaultOptions, quantity: 1, cartId: Date.now() }])
+    setDateGroups(prev => prev.map(g => g.id === dateGroupId ? {
+      ...g,
+      customerGroups: g.customerGroups.map(cg => cg.id === custGroupId ? {
+        ...cg,
+        items: [...cg.items, { cartId: Date.now(), item, selectedOptions: defaultOptions, quantity: 1 }]
+      } : cg)
+    } : g))
   }
 
-  function updateAdminCartQty(cartId, delta) {
-    setAdminCart(prev => prev
-      .map(c => c.cartId === cartId ? { ...c, quantity: c.quantity + delta } : c)
-      .filter(c => c.quantity > 0)
-    )
+  function updateItemQty(dateGroupId, custGroupId, cartId, delta) {
+    setDateGroups(prev => prev.map(g => g.id === dateGroupId ? {
+      ...g,
+      customerGroups: g.customerGroups.map(cg => cg.id === custGroupId ? {
+        ...cg,
+        items: cg.items.map(it => it.cartId === cartId ? { ...it, quantity: it.quantity + delta } : it).filter(it => it.quantity > 0)
+      } : cg)
+    } : g))
   }
 
-  function removeFromAdminCart(cartId) {
-    setAdminCart(prev => prev.filter(c => c.cartId !== cartId))
+  function removeItem(dateGroupId, custGroupId, cartId) {
+    setDateGroups(prev => prev.map(g => g.id === dateGroupId ? {
+      ...g,
+      customerGroups: g.customerGroups.map(cg => cg.id === custGroupId ? {
+        ...cg,
+        items: cg.items.filter(it => it.cartId !== cartId)
+      } : cg)
+    } : g))
   }
 
-  function getAdminItemPrice(cartItem) {
-    const optionsTotal = Object.values(cartItem.selectedOptions).reduce((sum, choice) => sum + (choice?.price_addition || 0), 0)
-    return (cartItem.item.price + optionsTotal) * cartItem.quantity
+  function updateItemOption(dateGroupId, custGroupId, cartId, groupId, choice) {
+    setDateGroups(prev => prev.map(g => g.id === dateGroupId ? {
+      ...g,
+      customerGroups: g.customerGroups.map(cg => cg.id === custGroupId ? {
+        ...cg,
+        items: cg.items.map(it => it.cartId === cartId ? { ...it, selectedOptions: { ...it.selectedOptions, [groupId]: choice } } : it)
+      } : cg)
+    } : g))
   }
 
-  const adminCartTotal = adminCart.reduce((sum, c) => sum + getAdminItemPrice(c), 0)
+  function getItemPriceAdmin(it) {
+    const optionsTotal = Object.values(it.selectedOptions).reduce((sum, choice) => sum + (choice?.price_addition || 0), 0)
+    return (it.item.price + optionsTotal) * it.quantity
+  }
 
-  async function submitAdminOrder() {
-    if (adminCart.length === 0) { setError('Keranjang kosong.'); return }
-    let customerId = adminOrderCustomerId
+  function getCustomerGroupTotal(cg) {
+    return cg.items.reduce((sum, it) => sum + getItemPriceAdmin(it), 0)
+  }
 
-    if (adminOrderIsNew) {
-      if (!adminOrderNewPhone.trim() || !adminOrderNewName.trim()) { setError('Nomor HP dan nama wajib diisi.'); return }
-      const { data: existing } = await supabase.from('customers').select('*').eq('phone', adminOrderNewPhone.trim()).single()
-      if (existing) {
-        customerId = existing.id
-      } else {
-        const { data: newCust, error: custError } = await supabase.from('customers').insert({ phone: adminOrderNewPhone.trim(), name: adminOrderNewName.trim() }).select().single()
-        if (custError) { setError('Gagal daftar customer baru.'); return }
-        customerId = newCust.id
+  async function submitAllOrders() {
+    setError('')
+    for (const dg of dateGroups) {
+      for (const cg of dg.customerGroups) {
+        if (cg.items.length === 0) continue
+        let customerId = cg.customerId
+
+        if (cg.isNew) {
+          if (!cg.newPhone.trim() || !cg.newName.trim()) { setError('Lengkapi nomor HP dan nama customer baru.'); return }
+          const { data: existing } = await supabase.from('customers').select('*').eq('phone', cg.newPhone.trim()).single()
+          if (existing) customerId = existing.id
+          else {
+            const { data: newCust, error: custError } = await supabase.from('customers').insert({ phone: cg.newPhone.trim(), name: cg.newName.trim() }).select().single()
+            if (custError) { setError('Gagal daftar customer baru: ' + cg.newPhone); return }
+            customerId = newCust.id
+          }
+        }
+
+        if (!customerId) { setError('Ada grup customer yang belum dipilih.'); return }
+
+        const orderTotal = getCustomerGroupTotal(cg)
+        const { data: customerData } = await supabase.from('customers').select('credit_balance').eq('id', customerId).single()
+        const availableCredit = customerData?.credit_balance || 0
+        const creditUsed = Math.min(availableCredit, orderTotal)
+        if (creditUsed > 0) {
+          await supabase.from('customers').update({ credit_balance: availableCredit - creditUsed }).eq('id', customerId)
+        }
+        const isPaid = creditUsed >= orderTotal
+
+        const { data: order, error: orderError } = await supabase.from('orders').insert({
+          customer_id: customerId,
+          order_for_date: dg.date,
+          credit_used: creditUsed,
+          voided: false,
+          paid: isPaid,
+          paid_at: isPaid ? new Date().toISOString() : null
+        }).select().single()
+        if (orderError) { setError('Gagal membuat order.'); return }
+
+        for (const it of cg.items) {
+          const itemPrice = it.item.price + Object.values(it.selectedOptions).reduce((sum, c) => sum + (c?.price_addition || 0), 0)
+          const { data: oi } = await supabase.from('order_items').insert({
+            order_id: order.id, menu_item_id: it.item.id,
+            menu_item_name: it.item.name, price_at_order: itemPrice, quantity: it.quantity
+          }).select().single()
+          const optionInserts = Object.entries(it.selectedOptions)
+            .filter(([_, choice]) => choice !== null)
+            .map(([groupId, choice]) => ({
+              order_item_id: oi.id, option_group_id: groupId,
+              option_group_name: it.item.optionGroups.find(og => og.id === groupId)?.name || '',
+              option_choice_id: choice.id, option_choice_label: choice.label
+            }))
+          if (optionInserts.length > 0) await supabase.from('order_item_options').insert(optionInserts)
+        }
       }
     }
-
-    if (!customerId) { setError('Pilih customer atau input customer baru.'); return }
-    setError('')
-
-    const { data: customerData } = await supabase.from('customers').select('credit_balance').eq('id', customerId).single()
-    const availableCredit = customerData?.credit_balance || 0
-    const creditUsed = Math.min(availableCredit, adminCartTotal)
-    if (creditUsed > 0) {
-      await supabase.from('customers').update({ credit_balance: availableCredit - creditUsed }).eq('id', customerId)
-    }
-    const isPaid = creditUsed >= adminCartTotal
-
-    const { data: order, error: orderError } = await supabase.from('orders').insert({
-      customer_id: customerId,
-      order_for_date: adminOrderDate,
-      credit_used: creditUsed,
-      voided: false,
-      paid: isPaid,
-      paid_at: isPaid ? new Date().toISOString() : null
-    }).select().single()
-    if (orderError) { setError('Gagal membuat order.'); return }
-
-    for (const cartItem of adminCart) {
-      const itemPrice = cartItem.item.price + Object.values(cartItem.selectedOptions).reduce((sum, c) => sum + (c?.price_addition || 0), 0)
-      const { data: oi } = await supabase.from('order_items').insert({
-        order_id: order.id, menu_item_id: cartItem.item.id,
-        menu_item_name: cartItem.item.name, price_at_order: itemPrice, quantity: cartItem.quantity
-      }).select().single()
-      const optionInserts = Object.entries(cartItem.selectedOptions)
-        .filter(([_, choice]) => choice !== null)
-        .map(([groupId, choice]) => ({
-          order_item_id: oi.id, option_group_id: groupId,
-          option_group_name: cartItem.item.optionGroups.find(og => og.id === groupId)?.name || '',
-          option_choice_id: choice.id, option_choice_label: choice.label
-        }))
-      if (optionInserts.length > 0) await supabase.from('order_item_options').insert(optionInserts)
-    }
-
-    setAdminCart([])
-    setAdminOrderCustomerId('')
-    setAdminOrderNewPhone('')
-    setAdminOrderNewName('')
-    setAdminOrderIsNew(false)
+    setDateGroups([])
     fetchAllUnpaid(); fetchAllCustomers(); fetchWorkOrders()
-    alert('Order berhasil dibuat untuk customer.')
+    alert('Semua order berhasil dibuat.')
   }
 
   async function savePaymentAccount() {
@@ -938,94 +997,109 @@ function AdminPage() {
 
           {tab === 'inputorder' && (
             <div>
-              <div style={st.sectionBox}>
-                <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Input Order untuk Customer</h3>
+              <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Input Order untuk Customer</h3>
 
-                <label style={st.checkRow}>
-                  <input type="checkbox" checked={adminOrderIsNew}
-                    onChange={e => { setAdminOrderIsNew(e.target.checked); setAdminOrderCustomerId('') }} />
-                  Customer baru
-                </label>
-
-                {adminOrderIsNew ? (
-                  <>
-                    <input style={st.input} placeholder="Nomor HP" value={adminOrderNewPhone}
-                      onChange={e => setAdminOrderNewPhone(e.target.value)} />
-                    <input style={st.input} placeholder="Nama" value={adminOrderNewName}
-                      onChange={e => setAdminOrderNewName(e.target.value)} />
-                  </>
-                ) : (
-                  <select style={st.input} value={adminOrderCustomerId}
-                    onChange={e => setAdminOrderCustomerId(e.target.value)}>
-                    <option value="">-- Pilih Customer --</option>
-                    {allCustomers.map(c => (
-                      <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
-                    ))}
-                  </select>
-                )}
-
-                <label style={st.label}>Tanggal Delivery:</label>
-                <input style={st.input} type="date" value={adminOrderDate}
-                  onChange={e => setAdminOrderDate(e.target.value)} />
-
-                <label style={{ ...st.label, marginTop: '12px' }}>Pilih Menu:</label>
-                {adminMenuFull.map(item => (
-                  <div key={item.id} style={{ ...st.itemCard, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <strong style={{ fontSize: '13px', color: '#2c2c2a' }}>{item.name}</strong>
-                      <div style={{ fontSize: '12px', color: '#5a5248' }}>Rp {item.price.toLocaleString('id-ID')}</div>
-                    </div>
-                    <button style={st.btnSmall} onClick={() => addToAdminCart(item)}>+ Tambah</button>
+              {dateGroups.map(dg => (
+                <div key={dg.id} style={{ ...st.sectionBox, border: '1.5px solid #1a3d2b' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <input style={{ ...st.input, marginBottom: 0, width: '180px' }} type="date" value={dg.date}
+                      onChange={e => updateDateGroupDate(dg.id, e.target.value)} />
+                    <button style={{ ...st.btnSmall, background: '#c0392b' }} onClick={() => removeDateGroup(dg.id)}>Hapus Tanggal</button>
                   </div>
-                ))}
 
-                {adminCart.length > 0 && (
-                  <div style={{ marginTop: '16px', borderTop: '1.5px solid #1a3d2b', paddingTop: '12px' }}>
-                    <strong style={{ color: '#1a3d2b', fontSize: '13px' }}>Keranjang:</strong>
-                    {adminCart.map(cartItem => (
-                      <div key={cartItem.cartId} style={{ ...st.itemCard, marginTop: '8px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <strong style={{ fontSize: '13px', color: '#2c2c2a' }}>{cartItem.item.name}</strong>
-                          <button style={st.btnRemove} onClick={() => removeFromAdminCart(cartItem.cartId)}>✕</button>
-                        </div>
-                        {cartItem.item.optionGroups.map(og => (
-                          <div key={og.id} style={{ marginTop: '6px' }}>
-                            <span style={{ fontSize: '12px', color: '#5a5248' }}>{og.name}:</span>
-                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
-                              {!og.required && (
-                                <button style={{ ...st.dayBtn, ...(!cartItem.selectedOptions[og.id] ? st.dayBtnActive : {}) }}
-                                  onClick={() => setAdminCart(prev => prev.map(c => c.cartId === cartItem.cartId ? { ...c, selectedOptions: { ...c.selectedOptions, [og.id]: null } } : c))}>
-                                  Tidak ada
-                                </button>
-                              )}
-                              {og.choices.map(choice => (
-                                <button key={choice.id}
-                                  style={{ ...st.dayBtn, ...(cartItem.selectedOptions[og.id]?.id === choice.id ? st.dayBtnActive : {}) }}
-                                  onClick={() => setAdminCart(prev => prev.map(c => c.cartId === cartItem.cartId ? { ...c, selectedOptions: { ...c.selectedOptions, [og.id]: choice } } : c))}>
-                                  {choice.label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
-                          <button style={st.btnSmall} onClick={() => updateAdminCartQty(cartItem.cartId, -1)}>−</button>
-                          <span style={{ fontSize: '13px' }}>{cartItem.quantity}</span>
-                          <button style={st.btnSmall} onClick={() => updateAdminCartQty(cartItem.cartId, 1)}>+</button>
-                          <span style={{ marginLeft: 'auto', fontSize: '13px', fontWeight: 'bold', color: '#1a3d2b' }}>
-                            Rp {getAdminItemPrice(cartItem).toLocaleString('id-ID')}
-                          </span>
-                        </div>
+                  {dg.customerGroups.map(cg => (
+                    <div key={cg.id} style={{ background: '#fff', border: '0.5px solid #d6cfc4', borderRadius: '8px', padding: '12px', marginBottom: '10px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <label style={{ ...st.checkRow, marginBottom: 0 }}>
+                          <input type="checkbox" checked={cg.isNew}
+                            onChange={e => updateCustomerGroup(dg.id, cg.id, { isNew: e.target.checked, customerId: '' })} />
+                          Customer baru
+                        </label>
+                        <button style={st.btnRemove} onClick={() => removeCustomerGroup(dg.id, cg.id)}>✕</button>
                       </div>
-                    ))}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px', fontSize: '15px' }}>
-                      <strong>Total</strong>
-                      <strong style={{ color: '#1a3d2b' }}>Rp {adminCartTotal.toLocaleString('id-ID')}</strong>
+
+                      {cg.isNew ? (
+                        <>
+                          <input style={st.input} placeholder="Nomor HP" value={cg.newPhone}
+                            onChange={e => updateCustomerGroup(dg.id, cg.id, { newPhone: e.target.value })} />
+                          <input style={st.input} placeholder="Nama" value={cg.newName}
+                            onChange={e => updateCustomerGroup(dg.id, cg.id, { newName: e.target.value })} />
+                        </>
+                      ) : (
+                        <select style={st.input} value={cg.customerId}
+                          onChange={e => updateCustomerGroup(dg.id, cg.id, { customerId: e.target.value })}>
+                          <option value="">-- Pilih Customer --</option>
+                          {allCustomers.map(c => (
+                            <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
+                          ))}
+                        </select>
+                      )}
+
+                      <div style={{ marginTop: '8px' }}>
+                        <select style={st.input} value="" onChange={e => {
+                          const item = adminMenuFull.find(m => m.id === e.target.value)
+                          if (item) addItemToCustomerGroup(dg.id, cg.id, item)
+                        }}>
+                          <option value="">+ Tambah menu...</option>
+                          {adminMenuFull.map(item => (
+                            <option key={item.id} value={item.id}>{item.name} - Rp {item.price.toLocaleString('id-ID')}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {cg.items.map(it => (
+                        <div key={it.cartId} style={{ background: '#f7f3ee', borderRadius: '6px', padding: '8px', marginTop: '8px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <strong style={{ fontSize: '12px', color: '#2c2c2a' }}>{it.item.name}</strong>
+                            <button style={st.btnRemove} onClick={() => removeItem(dg.id, cg.id, it.cartId)}>✕</button>
+                          </div>
+                          {it.item.optionGroups.map(og => (
+                            <div key={og.id} style={{ marginTop: '4px' }}>
+                              <span style={{ fontSize: '11px', color: '#5a5248' }}>{og.name}:</span>
+                              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '3px' }}>
+                                {!og.required && (
+                                  <button style={{ ...st.dayBtn, padding: '3px 7px', fontSize: '11px', ...(!it.selectedOptions[og.id] ? st.dayBtnActive : {}) }}
+                                    onClick={() => updateItemOption(dg.id, cg.id, it.cartId, og.id, null)}>Tidak ada</button>
+                                )}
+                                {og.choices.map(choice => (
+                                  <button key={choice.id}
+                                    style={{ ...st.dayBtn, padding: '3px 7px', fontSize: '11px', ...(it.selectedOptions[og.id]?.id === choice.id ? st.dayBtnActive : {}) }}
+                                    onClick={() => updateItemOption(dg.id, cg.id, it.cartId, og.id, choice)}>{choice.label}</button>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+                            <button style={{ ...st.btnSmall, padding: '4px 10px' }} onClick={() => updateItemQty(dg.id, cg.id, it.cartId, -1)}>−</button>
+                            <span style={{ fontSize: '12px' }}>{it.quantity}</span>
+                            <button style={{ ...st.btnSmall, padding: '4px 10px' }} onClick={() => updateItemQty(dg.id, cg.id, it.cartId, 1)}>+</button>
+                            <span style={{ marginLeft: 'auto', fontSize: '12px', fontWeight: 'bold', color: '#1a3d2b' }}>
+                              Rp {getItemPriceAdmin(it).toLocaleString('id-ID')}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+
+                      {cg.items.length > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', paddingTop: '8px', borderTop: '0.5px solid #d6cfc4', fontSize: '13px' }}>
+                          <strong>Subtotal</strong>
+                          <strong style={{ color: '#1a3d2b' }}>Rp {getCustomerGroupTotal(cg).toLocaleString('id-ID')}</strong>
+                        </div>
+                      )}
                     </div>
-                    <button style={{ ...st.btn, marginTop: '10px' }} onClick={submitAdminOrder}>Buat Order</button>
-                  </div>
-                )}
-              </div>
+                  ))}
+
+                  <button style={st.btnOutline} onClick={() => addCustomerGroup(dg.id)}>+ Tambah Customer untuk Tanggal Ini</button>
+                </div>
+              ))}
+
+              <button style={st.btn} onClick={addDateGroup}>+ Tambah Tanggal</button>
+
+              {dateGroups.length > 0 && dateGroups.some(dg => dg.customerGroups.some(cg => cg.items.length > 0)) && (
+                <button style={{ ...st.btn, background: '#2d7a4f', marginTop: '16px' }} onClick={submitAllOrders}>
+                  Buat Semua Order
+                </button>
+              )}
             </div>
           )}
 
