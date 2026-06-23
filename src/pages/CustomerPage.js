@@ -417,8 +417,8 @@ function CustomerPage() {
                         <strong>Total</strong>
                         <strong style={{ color: '#1a3d2b' }}>Rp {total.toLocaleString('id-ID')}</strong>
                       </div>
-                      <button style={st.btn} onClick={() => setShowSummary(true)} disabled={loading}>
-                        Pesan Sekarang
+                      <button style={{ ...st.btn, position: 'sticky', bottom: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.25)' }} onClick={() => setShowSummary(true)} disabled={loading}>
+                        Pesan Sekarang ({cart.reduce((sum, c) => sum + c.quantity, 0)}) · Rp {total.toLocaleString('id-ID')}
                       </button>
                     </div>
                   </div>
