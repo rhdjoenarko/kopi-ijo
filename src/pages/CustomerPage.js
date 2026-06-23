@@ -443,6 +443,11 @@ function CustomerPage() {
               <div style={{ padding: '0 16px 16px' }}>
                 <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Riwayat & Tagihan</h3>
                 {orders.length === 0 && <p style={{ color: '#5a5248' }}>Belum ada order.</p>}
+                {orders.length > 0 && (
+                  <div style={{ background: '#d4e8d8', borderRadius: '10px', padding: '12px', marginBottom: '12px', fontSize: '13px', color: '#1a3d2b', textAlign: 'center' }}>
+                    ☕ Makasih udah support Kopi Ijø! Kamu sudah order {orders.filter(o => !o.voided).length}x
+                  </div>
+                )}
 
                 {(() => {
                   const totalBelumBayar = orders
