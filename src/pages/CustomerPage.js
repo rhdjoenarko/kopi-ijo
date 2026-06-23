@@ -71,6 +71,7 @@ function CustomerPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [orderSuccess, setOrderSuccess] = useState(false)
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [showSummary, setShowSummary] = useState(false)
   const [expandedOrder, setExpandedOrder] = useState(null)
   const [orderCutoff, setOrderCutoff] = useState(7)
@@ -264,32 +265,18 @@ function CustomerPage() {
         }))
       if (optionInserts.length > 0) await supabase.from('order_item_options').insert(optionInserts)
     }
-    setLoading(false); setOrderSuccess(true); setCart([]); setActiveTab('riwayat'); fetchMyOrders(); refreshCustomer()
+    setLoading(false); setShowSuccessModal(true); setCart([])
+    setTimeout(() => {
+      setShowSuccessModal(false)
+      setActiveTab('riwayat')
+      fetchMyOrders()
+      refreshCustomer()
+    }, 1500)
   }
 
   const now = new Date()
   const todayStr = now.toLocaleDateString('en-CA')
   const targetStr = orderTarget.toLocaleDateString('en-CA')
-
-  if (orderSuccess) return (
-    <div style={st.container}>
-      <div style={st.card}>
-        <div style={st.header}>
-          <img src="https://haixnqmapezjikgpwjqh.supabase.co/storage/v1/object/public/assets/kopi%20ijo.png"
-            alt="Kopi Ijø" style={{ height: '80px', objectFit: 'contain' }} />
-        </div>
-        <div style={{ padding: '32px 24px', textAlign: 'center' }}>
-          <div style={{ fontSize: '40px', marginBottom: '12px' }}>✓</div>
-          <h2 style={{ color: '#1a3d2b', margin: '0 0 8px' }}>Order masuk!</h2>
-          <p style={{ color: '#5a5248', fontSize: '14px', margin: '0 0 24px' }}>
-            Makasih ya, <strong>{customer?.name}</strong>! Ordermu untuk <strong>{targetStr === todayStr ? 'hari ini' : 'tanggal'} ({formatOrderDate(orderTarget)})</strong> udah kami terima. Sampai ketemu! ☕
-          </p>
-          <button style={st.btn} onClick={() => { setOrderSuccess(false); setActiveTab('menu'); fetchMenu() }}>Order Lagi</button>
-          <button style={{ ...st.btnOutline, marginTop: '8px' }} onClick={() => { setOrderSuccess(false); setActiveTab('riwayat') }}>Lihat Riwayat</button>
-        </div>
-      </div>
-    </div>
-  )
 
   return (
     <div style={st.container}>
@@ -566,6 +553,16 @@ function CustomerPage() {
           </div>
         )}
       </div>
+
+      {showSuccessModal && (
+        <div style={st.overlay}>
+          <div style={{ background: '#ede8df', borderRadius: '16px', padding: '32px 24px', textAlign: 'center', maxWidth: '320px' }}>
+            <div style={{ fontSize: '40px', marginBottom: '12px' }}>✓</div>
+            <h3 style={{ color: '#1a3d2b', margin: '0 0 8px' }}>Order masuk!</h3>
+            <p style={{ color: '#5a5248', fontSize: '13px', margin: 0 }}>Mengalihkan ke riwayat...</p>
+          </div>
+        </div>
+      )}
 
       {showSummary && (
         <div style={st.overlay}>
