@@ -70,7 +70,6 @@ function CustomerPage() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [orderSuccess, setOrderSuccess] = useState(false)
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [showSummary, setShowSummary] = useState(false)
   const [expandedOrder, setExpandedOrder] = useState(null)
@@ -273,10 +272,6 @@ function CustomerPage() {
       refreshCustomer()
     }, 1500)
   }
-
-  const now = new Date()
-  const todayStr = now.toLocaleDateString('en-CA')
-  const targetStr = orderTarget.toLocaleDateString('en-CA')
 
   return (
     <div style={st.container}>
