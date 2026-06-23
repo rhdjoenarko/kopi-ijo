@@ -81,6 +81,7 @@ function CustomerPage() {
   const [todayIndex, setTodayIndex] = useState(getOrderTarget(7).getDay())
   const [transferClaiming, setTransferClaiming] = useState(false)
   const [transferClaimed, setTransferClaimed] = useState(false)
+  const [showFloatingCart, setShowFloatingCart] = useState(true)
 
   useEffect(() => {
     async function loadSettings() {
@@ -111,6 +112,18 @@ function CustomerPage() {
     if (step === 'menu') { fetchMenu(); fetchMyOrders() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step])
+
+  useEffect(() => {
+    function handleScroll() {
+      const cartSection = document.getElementById('cart-section')
+      if (!cartSection) { setShowFloatingCart(true); return }
+      const rect = cartSection.getBoundingClientRect()
+      setShowFloatingCart(rect.top > window.innerHeight - 100)
+    }
+    window.addEventListener('scroll', handleScroll)
+    handleScroll()
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [cart])
 
   async function fetchMenu() {
     const { data, error } = await supabase
@@ -360,6 +373,12 @@ function CustomerPage() {
                     </div>
                   )
                 })}
+
+                {cart.length > 0 && showFloatingCart && (
+                  <button style={st.floatingCartBtn} onClick={() => document.getElementById('cart-section')?.scrollIntoView({ behavior: 'smooth' })}>
+                    🛒 {cart.reduce((sum, c) => sum + c.quantity, 0)} item · Rp {total.toLocaleString('id-ID')}
+                  </button>
+                )}
 
                 {cart.length > 0 && (
                   <div id="cart-section" style={st.cartBox}>
@@ -619,7 +638,7 @@ const st = {
   addBtn: { padding: '6px 12px', background: '#1a3d2b', color: '#e8f0e2', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', whiteSpace: 'nowrap' },
   addBtnDisabled: { background: '#ccc', cursor: 'not-allowed' },
   cartBox: { border: '1.5px solid #1a3d2b', borderRadius: '10px', overflow: 'hidden', marginTop: '16px' },
-  floatingCartBtn: { position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)', width: 'calc(100% - 40px)', maxWidth: '440px', padding: '14px', background: '#1a3d2b', color: '#e8f0e2', border: 'none', borderRadius: '12px', fontSize: '14px', fontWeight: '500', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', zIndex: 50 },
+  floatingCartBtn: { position: 'fixed', bottom: '20px', right: '20px', padding: '10px 16px', background: '#1a3d2b', color: '#e8f0e2', border: 'none', borderRadius: '24px', fontSize: '13px', fontWeight: '500', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', zIndex: 50 },
   cartHeader: { background: '#1a3d2b', padding: '9px 12px', display: 'flex', alignItems: 'center', gap: '8px', color: '#e8f0e2', fontSize: '13px', fontWeight: '500' },
   cartItem: { background: '#ede8df', border: '0.5px solid #d6cfc4', borderRadius: '7px', padding: '10px', marginBottom: '8px' },
   optionLabel: { fontSize: '12px', color: '#5a5248', display: 'block', marginBottom: '4px' },
