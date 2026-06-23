@@ -362,12 +362,6 @@ function CustomerPage() {
                 })}
 
                 {cart.length > 0 && (
-                  <button style={st.floatingCartBtn} onClick={() => document.getElementById('cart-section')?.scrollIntoView({ behavior: 'smooth' })}>
-                    🛒 Lihat Keranjang ({cart.reduce((sum, c) => sum + c.quantity, 0)}) · Rp {total.toLocaleString('id-ID')}
-                  </button>
-                )}
-
-                {cart.length > 0 && (
                   <div id="cart-section" style={st.cartBox}>
                     <div style={st.cartHeader}>
                       <span>🛒</span>
