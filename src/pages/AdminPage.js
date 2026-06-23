@@ -38,6 +38,13 @@ function AdminPage() {
   const [editingPa, setEditingPa] = useState(null)
   const [closedDays, setClosedDays] = useState([])
   const [closedDayForm, setClosedDayForm] = useState({ type: 'recurring', day_of_week: 1, specific_date: '', note: '' })
+  const [adminOrderCustomerId, setAdminOrderCustomerId] = useState('')
+  const [adminOrderNewPhone, setAdminOrderNewPhone] = useState('')
+  const [adminOrderNewName, setAdminOrderNewName] = useState('')
+  const [adminOrderIsNew, setAdminOrderIsNew] = useState(false)
+  const [adminOrderDate, setAdminOrderDate] = useState(() => new Date().toLocaleDateString('en-CA'))
+  const [adminCart, setAdminCart] = useState([])
+  const [adminMenuFull, setAdminMenuFull] = useState([])
   const [workDateLabel, setWorkDateLabel] = useState('')
   const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '' })
   const [menuFormGroups, setMenuFormGroups] = useState([])
@@ -129,6 +136,21 @@ function AdminPage() {
     if (data) setClosedDays(data)
   }, [])
 
+  const fetchAdminMenuFull = useCallback(async () => {
+    const { data } = await supabase
+      .from('menu_items')
+      .select(`*, menu_item_option_groups(option_group_id, option_groups(id, name, required, option_choices(id, label, sort_order, price_addition)))`)
+      .eq('active', true)
+      .order('sort_order', { ascending: true })
+    if (data) setAdminMenuFull(data.map(item => ({
+      ...item,
+      optionGroups: item.menu_item_option_groups.map(r => ({
+        ...r.option_groups,
+        choices: [...r.option_groups.option_choices].sort((a, b) => a.sort_order - b.sort_order)
+      }))
+    })))
+  }, [])
+
   useEffect(() => {
     async function init() {
       setLoading(true)
@@ -137,11 +159,12 @@ function AdminPage() {
       await fetchAllCustomers()
       await fetchPaymentAccounts()
       await fetchClosedDays()
+      await fetchAdminMenuFull()
       await Promise.all([fetchMenu(), fetchOptionGroups(), fetchDailyTotals()])
       setLoading(false)
     }
     init()
-  }, [fetchWorkOrders, fetchAllUnpaid, fetchAllCustomers, fetchPaymentAccounts, fetchClosedDays, fetchMenu, fetchOptionGroups, fetchDailyTotals])
+  }, [fetchWorkOrders, fetchAllUnpaid, fetchAllCustomers, fetchPaymentAccounts, fetchClosedDays, fetchAdminMenuFull, fetchMenu, fetchOptionGroups, fetchDailyTotals])
 
   async function handleTopUp(customerId, phone) {
     const amount = parseInt(topUpAmount[phone])
@@ -202,6 +225,94 @@ function AdminPage() {
     }
     await supabase.from('orders').update({ voided: true, voided_at: new Date().toISOString() }).eq('id', orderId)
     fetchAllUnpaid(); fetchAllCustomers(); fetchWorkOrders()
+  }
+
+  function addToAdminCart(item) {
+    const defaultOptions = {}
+    item.optionGroups.forEach(og => {
+      if (og.required && og.choices.length > 0) defaultOptions[og.id] = og.choices[0]
+    })
+    setAdminCart(prev => [...prev, { item, selectedOptions: defaultOptions, quantity: 1, cartId: Date.now() }])
+  }
+
+  function updateAdminCartQty(cartId, delta) {
+    setAdminCart(prev => prev
+      .map(c => c.cartId === cartId ? { ...c, quantity: c.quantity + delta } : c)
+      .filter(c => c.quantity > 0)
+    )
+  }
+
+  function removeFromAdminCart(cartId) {
+    setAdminCart(prev => prev.filter(c => c.cartId !== cartId))
+  }
+
+  function getAdminItemPrice(cartItem) {
+    const optionsTotal = Object.values(cartItem.selectedOptions).reduce((sum, choice) => sum + (choice?.price_addition || 0), 0)
+    return (cartItem.item.price + optionsTotal) * cartItem.quantity
+  }
+
+  const adminCartTotal = adminCart.reduce((sum, c) => sum + getAdminItemPrice(c), 0)
+
+  async function submitAdminOrder() {
+    if (adminCart.length === 0) { setError('Keranjang kosong.'); return }
+    let customerId = adminOrderCustomerId
+
+    if (adminOrderIsNew) {
+      if (!adminOrderNewPhone.trim() || !adminOrderNewName.trim()) { setError('Nomor HP dan nama wajib diisi.'); return }
+      const { data: existing } = await supabase.from('customers').select('*').eq('phone', adminOrderNewPhone.trim()).single()
+      if (existing) {
+        customerId = existing.id
+      } else {
+        const { data: newCust, error: custError } = await supabase.from('customers').insert({ phone: adminOrderNewPhone.trim(), name: adminOrderNewName.trim() }).select().single()
+        if (custError) { setError('Gagal daftar customer baru.'); return }
+        customerId = newCust.id
+      }
+    }
+
+    if (!customerId) { setError('Pilih customer atau input customer baru.'); return }
+    setError('')
+
+    const { data: customerData } = await supabase.from('customers').select('credit_balance').eq('id', customerId).single()
+    const availableCredit = customerData?.credit_balance || 0
+    const creditUsed = Math.min(availableCredit, adminCartTotal)
+    if (creditUsed > 0) {
+      await supabase.from('customers').update({ credit_balance: availableCredit - creditUsed }).eq('id', customerId)
+    }
+    const isPaid = creditUsed >= adminCartTotal
+
+    const { data: order, error: orderError } = await supabase.from('orders').insert({
+      customer_id: customerId,
+      order_for_date: adminOrderDate,
+      credit_used: creditUsed,
+      voided: false,
+      paid: isPaid,
+      paid_at: isPaid ? new Date().toISOString() : null
+    }).select().single()
+    if (orderError) { setError('Gagal membuat order.'); return }
+
+    for (const cartItem of adminCart) {
+      const itemPrice = cartItem.item.price + Object.values(cartItem.selectedOptions).reduce((sum, c) => sum + (c?.price_addition || 0), 0)
+      const { data: oi } = await supabase.from('order_items').insert({
+        order_id: order.id, menu_item_id: cartItem.item.id,
+        menu_item_name: cartItem.item.name, price_at_order: itemPrice, quantity: cartItem.quantity
+      }).select().single()
+      const optionInserts = Object.entries(cartItem.selectedOptions)
+        .filter(([_, choice]) => choice !== null)
+        .map(([groupId, choice]) => ({
+          order_item_id: oi.id, option_group_id: groupId,
+          option_group_name: cartItem.item.optionGroups.find(og => og.id === groupId)?.name || '',
+          option_choice_id: choice.id, option_choice_label: choice.label
+        }))
+      if (optionInserts.length > 0) await supabase.from('order_item_options').insert(optionInserts)
+    }
+
+    setAdminCart([])
+    setAdminOrderCustomerId('')
+    setAdminOrderNewPhone('')
+    setAdminOrderNewName('')
+    setAdminOrderIsNew(false)
+    fetchAllUnpaid(); fetchAllCustomers(); fetchWorkOrders()
+    alert('Order berhasil dibuat untuk customer.')
   }
 
   async function savePaymentAccount() {
@@ -391,10 +502,10 @@ function AdminPage() {
         {loading && <p style={{ color: '#5a5248', padding: '8px 16px', fontSize: '13px' }}>Memuat...</p>}
 
         <div style={st.tabs}>
-          {['workorder', 'history', 'billing', 'menu', 'options', 'payment', 'jadwal', 'settings'].map(t => (
+          {['workorder', 'history', 'billing', 'inputorder', 'menu', 'options', 'payment', 'jadwal', 'settings'].map(t => (
             <button key={t} style={{ ...st.tab, ...(tab === t ? st.tabActive : {}) }}
               onClick={() => { setTab(t); if (t === 'history') fetchHistoryOrders(historyDate, historyFilter) }}>
-              {{ workorder: '📋 Work Order', history: '📅 History', billing: '💰 Tagihan', menu: '☕ Menu', options: '🎛 Opsi', payment: '🏦 Rekening', jadwal: '🗓 Jadwal', settings: '⚙️ Setting' }[t]}
+              {{ workorder: '📋 Work Order', history: '📅 History', billing: '💰 Tagihan', inputorder: '➕ Input Order', menu: '☕ Menu', options: '🎛 Opsi', payment: '🏦 Rekening', jadwal: '🗓 Jadwal', settings: '⚙️ Setting' }[t]}
             </button>
           ))}
         </div>
@@ -822,6 +933,99 @@ function AdminPage() {
                   <button style={{ ...st.btnSmall, background: '#c0392b' }} onClick={() => deleteClosedDay(cd.id)}>Hapus</button>
                 </div>
               ))}
+            </div>
+          )}
+
+          {tab === 'inputorder' && (
+            <div>
+              <div style={st.sectionBox}>
+                <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Input Order untuk Customer</h3>
+
+                <label style={st.checkRow}>
+                  <input type="checkbox" checked={adminOrderIsNew}
+                    onChange={e => { setAdminOrderIsNew(e.target.checked); setAdminOrderCustomerId('') }} />
+                  Customer baru
+                </label>
+
+                {adminOrderIsNew ? (
+                  <>
+                    <input style={st.input} placeholder="Nomor HP" value={adminOrderNewPhone}
+                      onChange={e => setAdminOrderNewPhone(e.target.value)} />
+                    <input style={st.input} placeholder="Nama" value={adminOrderNewName}
+                      onChange={e => setAdminOrderNewName(e.target.value)} />
+                  </>
+                ) : (
+                  <select style={st.input} value={adminOrderCustomerId}
+                    onChange={e => setAdminOrderCustomerId(e.target.value)}>
+                    <option value="">-- Pilih Customer --</option>
+                    {allCustomers.map(c => (
+                      <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
+                    ))}
+                  </select>
+                )}
+
+                <label style={st.label}>Tanggal Delivery:</label>
+                <input style={st.input} type="date" value={adminOrderDate}
+                  onChange={e => setAdminOrderDate(e.target.value)} />
+
+                <label style={{ ...st.label, marginTop: '12px' }}>Pilih Menu:</label>
+                {adminMenuFull.map(item => (
+                  <div key={item.id} style={{ ...st.itemCard, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <strong style={{ fontSize: '13px', color: '#2c2c2a' }}>{item.name}</strong>
+                      <div style={{ fontSize: '12px', color: '#5a5248' }}>Rp {item.price.toLocaleString('id-ID')}</div>
+                    </div>
+                    <button style={st.btnSmall} onClick={() => addToAdminCart(item)}>+ Tambah</button>
+                  </div>
+                ))}
+
+                {adminCart.length > 0 && (
+                  <div style={{ marginTop: '16px', borderTop: '1.5px solid #1a3d2b', paddingTop: '12px' }}>
+                    <strong style={{ color: '#1a3d2b', fontSize: '13px' }}>Keranjang:</strong>
+                    {adminCart.map(cartItem => (
+                      <div key={cartItem.cartId} style={{ ...st.itemCard, marginTop: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <strong style={{ fontSize: '13px', color: '#2c2c2a' }}>{cartItem.item.name}</strong>
+                          <button style={st.btnRemove} onClick={() => removeFromAdminCart(cartItem.cartId)}>✕</button>
+                        </div>
+                        {cartItem.item.optionGroups.map(og => (
+                          <div key={og.id} style={{ marginTop: '6px' }}>
+                            <span style={{ fontSize: '12px', color: '#5a5248' }}>{og.name}:</span>
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
+                              {!og.required && (
+                                <button style={{ ...st.dayBtn, ...(!cartItem.selectedOptions[og.id] ? st.dayBtnActive : {}) }}
+                                  onClick={() => setAdminCart(prev => prev.map(c => c.cartId === cartItem.cartId ? { ...c, selectedOptions: { ...c.selectedOptions, [og.id]: null } } : c))}>
+                                  Tidak ada
+                                </button>
+                              )}
+                              {og.choices.map(choice => (
+                                <button key={choice.id}
+                                  style={{ ...st.dayBtn, ...(cartItem.selectedOptions[og.id]?.id === choice.id ? st.dayBtnActive : {}) }}
+                                  onClick={() => setAdminCart(prev => prev.map(c => c.cartId === cartItem.cartId ? { ...c, selectedOptions: { ...c.selectedOptions, [og.id]: choice } } : c))}>
+                                  {choice.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+                          <button style={st.btnSmall} onClick={() => updateAdminCartQty(cartItem.cartId, -1)}>−</button>
+                          <span style={{ fontSize: '13px' }}>{cartItem.quantity}</span>
+                          <button style={st.btnSmall} onClick={() => updateAdminCartQty(cartItem.cartId, 1)}>+</button>
+                          <span style={{ marginLeft: 'auto', fontSize: '13px', fontWeight: 'bold', color: '#1a3d2b' }}>
+                            Rp {getAdminItemPrice(cartItem).toLocaleString('id-ID')}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px', fontSize: '15px' }}>
+                      <strong>Total</strong>
+                      <strong style={{ color: '#1a3d2b' }}>Rp {adminCartTotal.toLocaleString('id-ID')}</strong>
+                    </div>
+                    <button style={{ ...st.btn, marginTop: '10px' }} onClick={submitAdminOrder}>Buat Order</button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
