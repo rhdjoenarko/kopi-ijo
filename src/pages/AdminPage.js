@@ -33,6 +33,8 @@ function AdminPage() {
   const [manualBillAmount, setManualBillAmount] = useState({})
   const [manualBillNote, setManualBillNote] = useState({})
   const [manualBillUseCredit, setManualBillUseCredit] = useState({})
+  const [bonusAmount, setBonusAmount] = useState({})
+  const [bonusNote, setBonusNote] = useState({})
   const [paymentAccounts, setPaymentAccounts] = useState([])
   const [paForm, setPaForm] = useState({ bank_name: '', account_number: '', account_name: '', sort_order: 0 })
   const [editingPa, setEditingPa] = useState(null)
@@ -179,7 +181,7 @@ function AdminPage() {
     await supabase.from('customer_credits').insert({ customer_id: customerId, amount, note: topUpNote[phone] || '' })
     const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === phone)
     for (const o of unpaidOrders) {
-      const orderBill = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.promo_discount || 0) - (o.credit_used || 0)
+      const orderBill = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0)
       if (orderBill <= 0) { await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id); continue }
       if (remainingCredit >= orderBill) {
         remainingCredit -= orderBill
@@ -193,6 +195,44 @@ function AdminPage() {
     setTopUpAmount(prev => ({ ...prev, [phone]: '' }))
     setTopUpNote(prev => ({ ...prev, [phone]: '' }))
     fetchAllCustomers(); fetchAllUnpaid()
+  }
+
+  async function handleBonusGive(customerId, phone) {
+    const amount = parseInt(bonusAmount[phone])
+    if (!amount || amount <= 0) return
+
+    const customer = allCustomers.find(c => c.id === customerId)
+    let remainingBonus = (customer?.bonus_balance || 0) + amount
+
+    await supabase.from('customer_bonuses').insert({
+      customer_id: customerId,
+      amount,
+      note: bonusNote[phone] || ''
+    })
+
+    const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === phone)
+    for (const o of unpaidOrders) {
+      const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
+      const orderBill = subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0)
+      if (orderBill <= 0) {
+        await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
+        continue
+      }
+      if (remainingBonus >= orderBill) {
+        remainingBonus -= orderBill
+        await supabase.from('orders').update({ bonus_used: (o.bonus_used || 0) + orderBill, paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
+      } else if (remainingBonus > 0) {
+        await supabase.from('orders').update({ bonus_used: (o.bonus_used || 0) + remainingBonus }).eq('id', o.id)
+        remainingBonus = 0
+      }
+    }
+
+    await supabase.from('customers').update({ bonus_balance: remainingBonus }).eq('id', customerId)
+
+    setBonusAmount(prev => ({ ...prev, [phone]: '' }))
+    setBonusNote(prev => ({ ...prev, [phone]: '' }))
+    fetchAllCustomers()
+    fetchAllUnpaid()
   }
 
   async function handleManualBill(customerId, phone) {
@@ -487,7 +527,7 @@ function AdminPage() {
       o.order_items.forEach(oi => {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
         const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-        const effectivePaid = o.paid || (o.credit_used || 0) + (o.promo_discount || 0) >= subtotal
+        const effectivePaid = o.paid || (o.credit_used || 0) + (o.promo_discount || 0) + (o.bonus_used || 0) >= subtotal
         map[oi.menu_item_name].push({ customerName: o.customers?.name, customerPhone: o.customers?.phone, quantity: oi.quantity, options: oi.order_item_options, paid: o.paid, effectivePaid, transferClaimed: o.transfer_claimed, orderId: o.id })
       })
     })
@@ -500,7 +540,7 @@ function AdminPage() {
       o.order_items.forEach(oi => {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
         const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-        const effectivePaid = o.paid || (o.credit_used || 0) + (o.promo_discount || 0) >= subtotal
+        const effectivePaid = o.paid || (o.credit_used || 0) + (o.promo_discount || 0) + (o.bonus_used || 0) >= subtotal
         map[oi.menu_item_name].push({ customerName: o.customers?.name, quantity: oi.quantity, options: oi.order_item_options, paid: o.paid, effectivePaid, transferClaimed: o.transfer_claimed, voided: o.voided })
       })
     })
@@ -757,7 +797,7 @@ function AdminPage() {
                 const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === customer.phone)
                 const unpaidTotal = unpaidOrders.reduce((sum, o) => {
                   const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-                  return sum + subtotal - (o.promo_discount || 0) - (o.credit_used || 0)
+                  return sum + subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0)
                 }, 0)
                 const hasTransferClaim = unpaidOrders.some(o => o.transfer_claimed)
                 return (
@@ -770,6 +810,7 @@ function AdminPage() {
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '12px', color: '#1a3d2b' }}>Credit: <strong>Rp {(customer.credit_balance || 0).toLocaleString('id-ID')}</strong></div>
+                        {customer.bonus_balance > 0 && <div style={{ fontSize: '12px', color: '#e67e22' }}>Bonus: <strong>Rp {customer.bonus_balance.toLocaleString('id-ID')}</strong></div>}
                         {unpaidTotal > 0 && <div style={{ fontSize: '12px', color: '#c0392b' }}>Tagihan: <strong>Rp {unpaidTotal.toLocaleString('id-ID')}</strong></div>}
                         {unpaidTotal <= 0 && <div style={{ fontSize: '12px', color: '#1a3d2b' }}>✓ Lunas</div>}
                       </div>
@@ -782,6 +823,16 @@ function AdminPage() {
                         <input style={{ ...st.input, marginBottom: 0, flex: 2, minWidth: '100px' }} type="text" placeholder="Catatan (opsional)"
                           value={topUpNote[customer.phone] || ''} onChange={e => setTopUpNote(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
                         <button style={{ ...st.btnSmall, background: '#1a3d2b' }} onClick={() => handleTopUp(customer.id, customer.phone)}>+ Credit</button>
+                      </div>
+                    </div>
+                    <div style={{ borderTop: '0.5px solid #d6cfc4', paddingTop: '10px', marginBottom: '8px' }}>
+                      <div style={{ fontSize: '12px', color: '#5a5248', marginBottom: '6px' }}>Beri Bonus (subsidi, bukan cash):</div>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <input style={{ ...st.input, marginBottom: 0, flex: 1, minWidth: '80px' }} type="number" placeholder="Jumlah (Rp)"
+                          value={bonusAmount[customer.phone] || ''} onChange={e => setBonusAmount(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
+                        <input style={{ ...st.input, marginBottom: 0, flex: 2, minWidth: '100px' }} type="text" placeholder="Alasan (opsional)"
+                          value={bonusNote[customer.phone] || ''} onChange={e => setBonusNote(prev => ({ ...prev, [customer.phone]: e.target.value }))} />
+                        <button style={{ ...st.btnSmall, background: '#e67e22' }} onClick={() => handleBonusGive(customer.id, customer.phone)}>+ Bonus</button>
                       </div>
                     </div>
                     <div style={{ borderTop: '0.5px solid #d6cfc4', paddingTop: '10px', marginBottom: '8px' }}>
@@ -806,7 +857,7 @@ function AdminPage() {
                         <div style={{ borderTop: '0.5px solid #d6cfc4', paddingTop: '10px' }}>
                           {allOrders.map(o => {
                             const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-                            const sisaTagihan = Math.max(0, subtotal - (o.promo_discount || 0) - (o.credit_used || 0))
+                            const sisaTagihan = Math.max(0, subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0))
                             const lunasByCredit = !o.paid && sisaTagihan === 0
                             const statusColor = o.paid ? '#1a3d2b' : lunasByCredit ? '#2d7a4f' : o.transfer_claimed ? '#856404' : '#e67e22'
                             const statusLabel = o.paid ? '✓ Lunas' : lunasByCredit ? '✓ Lunas (Credit)' : o.transfer_claimed ? '💸 Klaim Transfer' : '⏳ Belum Bayar'
@@ -833,6 +884,11 @@ function AdminPage() {
                                   {o.promo_discount > 0 && (
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#e67e22' }}>
                                       <span>🏷 Diskon Promo</span><span>- Rp {o.promo_discount.toLocaleString('id-ID')}</span>
+                                    </div>
+                                  )}
+                                  {o.bonus_used > 0 && (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#e67e22' }}>
+                                      <span>🎁 Bonus dipakai</span><span>- Rp {o.bonus_used.toLocaleString('id-ID')}</span>
                                     </div>
                                   )}
                                   {o.credit_used > 0 && (
