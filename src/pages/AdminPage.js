@@ -50,6 +50,8 @@ function AdminPage() {
   // dateGroups: [{ id, date, customerGroups: [{ id, customerId, isNew, newPhone, newName, items: [{ cartId, item, selectedOptions, quantity }] }] }]
   const [dateGroups, setDateGroups] = useState([])
   const [workDateLabel, setWorkDateLabel] = useState('')
+  const [workOrderView, setWorkOrderView] = useState('po') // 'po' or 'langsung'
+  const [langsungOrders, setLangsungOrders] = useState([])
   const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '', batch2_eligible: false })
   const [menuFormGroups, setMenuFormGroups] = useState([])
   const [editingMenu, setEditingMenu] = useState(null)
@@ -105,6 +107,18 @@ function AdminPage() {
       .eq('voided', false)
       .order('created_at', { ascending: true })
     if (data) setOrders(data)
+  }, [])
+
+  const fetchLangsungOrders = useCallback(async () => {
+    const today = new Date().toLocaleDateString('en-CA')
+    const { data } = await supabase
+      .from('orders')
+      .select(`*, customers(name, phone), order_items(*, order_item_options(*))`)
+      .eq('order_for_date', today)
+      .eq('batch_type', 'batch2')
+      .eq('voided', false)
+      .order('created_at', { ascending: true })
+    if (data) setLangsungOrders(data)
   }, [])
 
   const fetchHistoryOrders = useCallback(async (dateStr, filterType) => {
@@ -178,6 +192,7 @@ function AdminPage() {
     async function init() {
       setLoading(true)
       await fetchWorkOrders()
+      await fetchLangsungOrders()
       await fetchAllUnpaid()
       await fetchAllCustomers()
       await fetchPaymentAccounts()
@@ -189,7 +204,7 @@ function AdminPage() {
       setLoading(false)
     }
     init()
-  }, [fetchWorkOrders, fetchAllUnpaid, fetchAllCustomers, fetchPaymentAccounts, fetchClosedDays, fetchBatchSettings, fetchAdminMenuFull, fetchPromos, fetchMenu, fetchOptionGroups, fetchDailyTotals])
+  }, [fetchWorkOrders, fetchLangsungOrders, fetchAllUnpaid, fetchAllCustomers, fetchPaymentAccounts, fetchClosedDays, fetchBatchSettings, fetchAdminMenuFull, fetchPromos, fetchMenu, fetchOptionGroups, fetchDailyTotals])
 
   async function handleTopUp(customerId, phone) {
     const amount = parseInt(topUpAmount[phone])
@@ -602,7 +617,8 @@ function AdminPage() {
 
   function getWorkOrderGroups() {
     const map = {}
-    orders.forEach(o => {
+    const sourceOrders = workOrderView === 'langsung' ? langsungOrders : orders
+    sourceOrders.forEach(o => {
       if (o.voided) return
       o.order_items.forEach(oi => {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
@@ -766,9 +782,19 @@ function AdminPage() {
 
           {tab === 'workorder' && (
             <div>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                <button style={{ ...st.tab, flex: 1, ...(workOrderView === 'po' ? st.tabActive : {}) }} onClick={() => setWorkOrderView('po')}>
+                  📅 Pre-Order
+                </button>
+                <button style={{ ...st.tab, flex: 1, ...(workOrderView === 'langsung' ? st.tabActive : {}) }} onClick={() => setWorkOrderView('langsung')}>
+                  ⚡ Order Langsung (Hari Ini)
+                </button>
+              </div>
               <div style={st.summaryBox}>
                 <strong style={{ color: '#1a3d2b' }}>Work Order</strong>
-                <div style={{ fontSize: '13px', color: '#1a3d2b', marginTop: '2px' }}>Delivery: <strong>{workDateLabel}</strong></div>
+                <div style={{ fontSize: '13px', color: '#1a3d2b', marginTop: '2px' }}>
+                  Delivery: <strong>{workOrderView === 'langsung' ? formatTimestamp(new Date().toISOString()).split(' · ')[0] : workDateLabel}</strong>
+                </div>
                 <div style={{ fontSize: '13px', color: '#5a5248', marginTop: '4px' }}>
                   Total terjual hari ini: <strong>{totalToday} item</strong>
                   {overGlobalLimit && <span style={{ color: '#c0392b', marginLeft: '8px' }}>⚠️ Melebihi limit ({globalLimitSaved})</span>}
