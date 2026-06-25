@@ -608,7 +608,7 @@ function AdminPage() {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
         const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
         const effectivePaid = o.paid || (o.credit_used || 0) + (o.promo_discount || 0) + (o.bonus_used || 0) + (o.manual_discount || 0) >= subtotal
-        map[oi.menu_item_name].push({ customerName: o.customers?.name, customerPhone: o.customers?.phone, quantity: oi.quantity, options: oi.order_item_options, paid: o.paid, effectivePaid, transferClaimed: o.transfer_claimed, orderId: o.id })
+        map[oi.menu_item_name].push({ customerName: o.customers?.name, customerPhone: o.customers?.phone, quantity: oi.quantity, options: oi.order_item_options, paid: o.paid, effectivePaid, transferClaimed: o.transfer_claimed, batchType: o.batch_type, orderId: o.id })
       })
     })
     return map
@@ -790,9 +790,14 @@ function AdminPage() {
                   {entries.map((entry, i) => {
                     const badge = getStatusBadge(entry)
                     return (
-                      <div key={i} style={st.workEntry}>
+                      <div key={i} style={{ ...st.workEntry, ...(entry.batchType === 'batch2' ? { borderLeft: '4px solid #e67e22', background: '#fff8f0' } : {}) }}>
                         <div style={st.workEntryRow}>
                           <div>
+                            {entry.batchType === 'batch2' && (
+                              <span style={{ background: '#e67e22', color: '#fff', fontSize: '10px', padding: '2px 6px', borderRadius: '10px', marginRight: '6px', fontWeight: '500' }}>
+                                ⚡ LANGSUNG
+                              </span>
+                            )}
                             <span style={{ fontSize: '13px', fontWeight: '500', color: '#2c2c2a' }}>
                               {entry.quantity > 1 ? `${entry.quantity}x ` : ''}{entry.customerName}
                             </span>
