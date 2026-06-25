@@ -593,6 +593,13 @@ function AdminPage() {
     fetchBatchSettings()
   }
 
+  async function resetShotUsed() {
+    if (!batchSettings) return
+    if (!window.confirm('Reset stok shot terpakai ke 0?')) return
+    await supabase.from('batch_settings').update({ shot_used: 0 }).eq('id', batchSettings.id)
+    fetchBatchSettings()
+  }
+
   function getWorkOrderGroups() {
     const map = {}
     orders.forEach(o => {
@@ -1484,9 +1491,14 @@ function AdminPage() {
                     Aktif: {batchSettings.is_active ? '🟢 Ya' : '🔴 Tidak'}<br />
                     Jam: {String(batchSettings.open_hour).padStart(2, '0')}:{String(batchSettings.open_minute).padStart(2, '0')} - {String(batchSettings.close_hour).padStart(2, '0')}:{String(batchSettings.close_minute).padStart(2, '0')}<br />
                     Sisa Stok Shot: <strong>{batchSettings.shot_stock - batchSettings.shot_used}</strong> dari {batchSettings.shot_stock}
-                    <button style={{ ...st.btnSmall, marginTop: '8px', background: batchSettings.is_active ? '#c0392b' : '#2d7a4f' }} onClick={toggleBatchActive}>
-                      {batchSettings.is_active ? 'Matikan Batch 2 Sekarang' : 'Aktifkan Batch 2 Sekarang'}
-                    </button>
+                    <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
+                      <button style={{ ...st.btnSmall, background: batchSettings.is_active ? '#c0392b' : '#2d7a4f' }} onClick={toggleBatchActive}>
+                        {batchSettings.is_active ? 'Matikan Sekarang' : 'Aktifkan Sekarang'}
+                      </button>
+                      <button style={{ ...st.btnSmall, background: '#e67e22' }} onClick={resetShotUsed}>
+                        Reset Stok Terpakai
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
