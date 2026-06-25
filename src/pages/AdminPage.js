@@ -487,7 +487,7 @@ function AdminPage() {
       o.order_items.forEach(oi => {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
         const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-        const effectivePaid = o.paid || (o.credit_used || 0) >= subtotal
+        const effectivePaid = o.paid || (o.credit_used || 0) + (o.promo_discount || 0) >= subtotal
         map[oi.menu_item_name].push({ customerName: o.customers?.name, customerPhone: o.customers?.phone, quantity: oi.quantity, options: oi.order_item_options, paid: o.paid, effectivePaid, transferClaimed: o.transfer_claimed, orderId: o.id })
       })
     })
@@ -500,7 +500,7 @@ function AdminPage() {
       o.order_items.forEach(oi => {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
         const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-        const effectivePaid = o.paid || (o.credit_used || 0) >= subtotal
+        const effectivePaid = o.paid || (o.credit_used || 0) + (o.promo_discount || 0) >= subtotal
         map[oi.menu_item_name].push({ customerName: o.customers?.name, quantity: oi.quantity, options: oi.order_item_options, paid: o.paid, effectivePaid, transferClaimed: o.transfer_claimed, voided: o.voided })
       })
     })
@@ -755,8 +755,10 @@ function AdminPage() {
               <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Tagihan & Credit</h3>
               {allCustomers.map(customer => {
                 const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === customer.phone)
-                const unpaidTotal = unpaidOrders.reduce((sum, o) =>
-                  sum + o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.credit_used || 0), 0)
+                const unpaidTotal = unpaidOrders.reduce((sum, o) => {
+                  const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
+                  return sum + subtotal - (o.promo_discount || 0) - (o.credit_used || 0)
+                }, 0)
                 const hasTransferClaim = unpaidOrders.some(o => o.transfer_claimed)
                 return (
                   <div key={customer.id} style={{ ...st.itemCard, marginBottom: '10px', borderColor: hasTransferClaim ? '#856404' : '#d6cfc4', borderWidth: hasTransferClaim ? '1.5px' : '0.5px' }}>
@@ -804,7 +806,7 @@ function AdminPage() {
                         <div style={{ borderTop: '0.5px solid #d6cfc4', paddingTop: '10px' }}>
                           {allOrders.map(o => {
                             const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-                            const sisaTagihan = Math.max(0, subtotal - (o.credit_used || 0))
+                            const sisaTagihan = Math.max(0, subtotal - (o.promo_discount || 0) - (o.credit_used || 0))
                             const lunasByCredit = !o.paid && sisaTagihan === 0
                             const statusColor = o.paid ? '#1a3d2b' : lunasByCredit ? '#2d7a4f' : o.transfer_claimed ? '#856404' : '#e67e22'
                             const statusLabel = o.paid ? '✓ Lunas' : lunasByCredit ? '✓ Lunas (Credit)' : o.transfer_claimed ? '💸 Klaim Transfer' : '⏳ Belum Bayar'
@@ -828,6 +830,11 @@ function AdminPage() {
                                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#5a5248' }}>
                                     <span>Subtotal</span><span>Rp {subtotal.toLocaleString('id-ID')}</span>
                                   </div>
+                                  {o.promo_discount > 0 && (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#e67e22' }}>
+                                      <span>🏷 Diskon Promo</span><span>- Rp {o.promo_discount.toLocaleString('id-ID')}</span>
+                                    </div>
+                                  )}
                                   {o.credit_used > 0 && (
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#1a3d2b' }}>
                                       <span>Credit dipakai</span><span>- Rp {o.credit_used.toLocaleString('id-ID')}</span>
