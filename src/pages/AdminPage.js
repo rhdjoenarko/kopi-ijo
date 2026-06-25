@@ -41,6 +41,8 @@ function AdminPage() {
   const [editingPa, setEditingPa] = useState(null)
   const [closedDays, setClosedDays] = useState([])
   const [closedDayForm, setClosedDayForm] = useState({ type: 'recurring', day_of_week: 1, specific_date: '', note: '' })
+  const [batchSettings, setBatchSettings] = useState(null)
+  const [batchForm, setBatchForm] = useState({ is_active: false, open_hour: 8, open_minute: 30, close_hour: 17, close_minute: 0, shot_stock: 0 })
   const [promos, setPromos] = useState([])
   const [promoForm, setPromoForm] = useState({ name: '', type: 'overall', discount_type: 'percent', discount_amount: '', menu_item_id: '', start_date: '', end_date: '', stackable: false, priority: 0 })
   const [editingPromo, setEditingPromo] = useState(null)
@@ -48,7 +50,7 @@ function AdminPage() {
   // dateGroups: [{ id, date, customerGroups: [{ id, customerId, isNew, newPhone, newName, items: [{ cartId, item, selectedOptions, quantity }] }] }]
   const [dateGroups, setDateGroups] = useState([])
   const [workDateLabel, setWorkDateLabel] = useState('')
-  const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '' })
+  const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '', batch2_eligible: false })
   const [menuFormGroups, setMenuFormGroups] = useState([])
   const [editingMenu, setEditingMenu] = useState(null)
   const [ogForm, setOgForm] = useState({ name: '', required: true, choices: [{ label: '', price_addition: 0 }] })
@@ -138,6 +140,20 @@ function AdminPage() {
     if (data) setClosedDays(data)
   }, [])
 
+  const fetchBatchSettings = useCallback(async () => {
+    const today = new Date().toLocaleDateString('en-CA')
+    const { data } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
+    if (data) {
+      setBatchSettings(data)
+      setBatchForm({
+        is_active: data.is_active, open_hour: data.open_hour, open_minute: data.open_minute,
+        close_hour: data.close_hour, close_minute: data.close_minute, shot_stock: data.shot_stock
+      })
+    } else {
+      setBatchSettings(null)
+    }
+  }, [])
+
   const fetchPromos = useCallback(async () => {
     const { data } = await supabase.from('promos').select('*, menu_items(name)').order('priority')
     if (data) setPromos(data)
@@ -166,13 +182,14 @@ function AdminPage() {
       await fetchAllCustomers()
       await fetchPaymentAccounts()
       await fetchClosedDays()
+      await fetchBatchSettings()
       await fetchAdminMenuFull()
       await fetchPromos()
       await Promise.all([fetchMenu(), fetchOptionGroups(), fetchDailyTotals()])
       setLoading(false)
     }
     init()
-  }, [fetchWorkOrders, fetchAllUnpaid, fetchAllCustomers, fetchPaymentAccounts, fetchClosedDays, fetchAdminMenuFull, fetchPromos, fetchMenu, fetchOptionGroups, fetchDailyTotals])
+  }, [fetchWorkOrders, fetchAllUnpaid, fetchAllCustomers, fetchPaymentAccounts, fetchClosedDays, fetchBatchSettings, fetchAdminMenuFull, fetchPromos, fetchMenu, fetchOptionGroups, fetchDailyTotals])
 
   async function handleTopUp(customerId, phone) {
     const amount = parseInt(topUpAmount[phone])
@@ -548,6 +565,34 @@ function AdminPage() {
     fetchClosedDays()
   }
 
+  async function saveBatchSettings() {
+    const today = new Date().toLocaleDateString('en-CA')
+    const payload = {
+      is_active: batchForm.is_active,
+      open_hour: parseInt(batchForm.open_hour),
+      open_minute: parseInt(batchForm.open_minute),
+      close_hour: parseInt(batchForm.close_hour),
+      close_minute: parseInt(batchForm.close_minute),
+      shot_stock: parseInt(batchForm.shot_stock) || 0,
+      batch_date: today
+    }
+    if (batchSettings) {
+      await supabase.from('batch_settings').update(payload).eq('id', batchSettings.id)
+    } else {
+      await supabase.from('batch_settings').insert({ ...payload, shot_used: 0 })
+    }
+    fetchBatchSettings()
+  }
+
+  async function toggleBatchActive() {
+    if (!batchSettings) {
+      await saveBatchSettings()
+      return
+    }
+    await supabase.from('batch_settings').update({ is_active: !batchSettings.is_active }).eq('id', batchSettings.id)
+    fetchBatchSettings()
+  }
+
   function getWorkOrderGroups() {
     const map = {}
     orders.forEach(o => {
@@ -595,13 +640,14 @@ function AdminPage() {
   }
 
   function resetMenuForm() {
-    setMenuForm({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '' })
-    setMenuFormGroups([]); setEditingMenu(null)
+    setMenuForm({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '', batch2_eligible: false })
+    setMenuFormGroups([])
+    setEditingMenu(null)
   }
 
   function startEditMenu(item) {
     setEditingMenu(item.id)
-    setMenuForm({ name: item.name, price: item.price, daily_limit: item.daily_limit || '', available_days: item.available_days || [0,1,2,3,4,5,6], active: item.active, sort_order: item.sort_order || 0, image_url: item.image_url || '' })
+    setMenuForm({ name: item.name, price: item.price, daily_limit: item.daily_limit || '', available_days: item.available_days || [0,1,2,3,4,5,6], active: item.active, sort_order: item.sort_order || 0, image_url: item.image_url || '', batch2_eligible: item.batch2_eligible || false })
     setMenuFormGroups(item.menu_item_option_groups.map(r => r.option_group_id))
     setTab('menu')
   }
@@ -613,7 +659,7 @@ function AdminPage() {
   async function saveMenu() {
     if (!menuForm.name.trim() || !menuForm.price) { setError('Nama dan harga wajib diisi.'); return }
     setError('')
-    const payload = { name: menuForm.name.trim(), price: parseInt(menuForm.price), daily_limit: menuForm.daily_limit ? parseInt(menuForm.daily_limit) : null, available_days: menuForm.available_days, active: menuForm.active, sort_order: parseInt(menuForm.sort_order) || 0, image_url: menuForm.image_url || null }
+    const payload = { name: menuForm.name.trim(), price: parseInt(menuForm.price), daily_limit: menuForm.daily_limit ? parseInt(menuForm.daily_limit) : null, available_days: menuForm.available_days, active: menuForm.active, sort_order: parseInt(menuForm.sort_order) || 0, image_url: menuForm.image_url || null, batch2_eligible: menuForm.batch2_eligible }
     let menuId = editingMenu
     if (editingMenu) {
       await supabase.from('menu_items').update(payload).eq('id', editingMenu)
@@ -701,10 +747,10 @@ function AdminPage() {
         {loading && <p style={{ color: '#5a5248', padding: '8px 16px', fontSize: '13px' }}>Memuat...</p>}
 
         <div style={st.tabs}>
-          {['workorder', 'history', 'billing', 'inputorder', 'menu', 'options', 'promo', 'payment', 'jadwal', 'settings'].map(t => (
+          {['workorder', 'history', 'billing', 'inputorder', 'menu', 'options', 'promo', 'payment', 'jadwal', 'batch2', 'settings'].map(t => (
             <button key={t} style={{ ...st.tab, ...(tab === t ? st.tabActive : {}) }}
               onClick={() => { setTab(t); if (t === 'history') fetchHistoryOrders(historyDate, historyFilter) }}>
-              {{ workorder: '📋 Work Order', history: '📅 History', billing: '💰 Tagihan', inputorder: '➕ Input Order', menu: '☕ Menu', options: '🎛 Opsi', promo: '🏷 Promo', payment: '🏦 Rekening', jadwal: '🗓 Jadwal', settings: '⚙️ Setting' }[t]}
+              {{ workorder: '📋 Work Order', history: '📅 History', billing: '💰 Tagihan', inputorder: '➕ Input Order', menu: '☕ Menu', options: '🎛 Opsi', promo: '🏷 Promo', payment: '🏦 Rekening', jadwal: '🗓 Jadwal', batch2: '⚡ Batch 2', settings: '⚙️ Setting' }[t]}
             </button>
           ))}
         </div>
@@ -1018,9 +1064,9 @@ function AdminPage() {
                   </label>
                 ))}
                 {optionGroups.length === 0 && <p style={{ fontSize: '13px', color: '#888' }}>Belum ada grup opsi.</p>}
-                <label style={{ ...st.checkRow, marginTop: '8px' }}>
-                  <input type="checkbox" checked={menuForm.active} onChange={e => setMenuForm(f => ({ ...f, active: e.target.checked }))} />
-                  {' '}Aktif
+                <label style={{ ...st.checkRow, marginTop: '4px' }}>
+                  <input type="checkbox" checked={menuForm.batch2_eligible || false} onChange={e => setMenuForm(f => ({ ...f, batch2_eligible: e.target.checked }))} />
+                  {' '}☕ Tersedia di Batch 2 (live di kantor)
                 </label>
                 <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                   <button style={st.btn} onClick={saveMenu}>{editingMenu ? 'Update Menu' : 'Simpan Menu'}</button>
@@ -1391,6 +1437,70 @@ function AdminPage() {
                   </div>
                 )
               })}
+            </div>
+          )}
+
+          {tab === 'batch2' && (
+            <div>
+              <div style={st.sectionBox}>
+                <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Setting Batch 2 Hari Ini</h3>
+                <p style={{ fontSize: '12px', color: '#888', marginTop: '-6px', marginBottom: '12px' }}>
+                  Setting ini berlaku untuk hari ini saja. Reset setiap hari.
+                </p>
+
+                <label style={{ ...st.checkRow, fontSize: '15px', fontWeight: '500' }}>
+                  <input type="checkbox" checked={batchForm.is_active}
+                    onChange={e => setBatchForm(f => ({ ...f, is_active: e.target.checked }))} />
+                  🟢 Batch 2 Aktif Hari Ini
+                </label>
+
+                <label style={st.label}>Jam Buka:</label>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px' }}>
+                  <input style={{ ...st.input, marginBottom: 0, width: '70px' }} type="number" min="0" max="23"
+                    value={batchForm.open_hour} onChange={e => setBatchForm(f => ({ ...f, open_hour: e.target.value }))} />
+                  <span>:</span>
+                  <input style={{ ...st.input, marginBottom: 0, width: '70px' }} type="number" min="0" max="59"
+                    value={batchForm.open_minute} onChange={e => setBatchForm(f => ({ ...f, open_minute: e.target.value }))} />
+                </div>
+
+                <label style={st.label}>Jam Tutup:</label>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px' }}>
+                  <input style={{ ...st.input, marginBottom: 0, width: '70px' }} type="number" min="0" max="23"
+                    value={batchForm.close_hour} onChange={e => setBatchForm(f => ({ ...f, close_hour: e.target.value }))} />
+                  <span>:</span>
+                  <input style={{ ...st.input, marginBottom: 0, width: '70px' }} type="number" min="0" max="59"
+                    value={batchForm.close_minute} onChange={e => setBatchForm(f => ({ ...f, close_minute: e.target.value }))} />
+                </div>
+
+                <label style={st.label}>Stok Shot Espresso Hari Ini:</label>
+                <input style={st.input} type="number" placeholder="Misal: 20" value={batchForm.shot_stock}
+                  onChange={e => setBatchForm(f => ({ ...f, shot_stock: e.target.value }))} />
+
+                <button style={st.btn} onClick={saveBatchSettings}>Simpan Setting Batch 2</button>
+
+                {batchSettings && (
+                  <div style={{ marginTop: '16px', background: '#d4e8d8', borderRadius: '8px', padding: '12px', fontSize: '13px', color: '#1a3d2b' }}>
+                    <strong>Status Sekarang:</strong><br />
+                    Aktif: {batchSettings.is_active ? '🟢 Ya' : '🔴 Tidak'}<br />
+                    Jam: {String(batchSettings.open_hour).padStart(2, '0')}:{String(batchSettings.open_minute).padStart(2, '0')} - {String(batchSettings.close_hour).padStart(2, '0')}:{String(batchSettings.close_minute).padStart(2, '0')}<br />
+                    Sisa Stok Shot: <strong>{batchSettings.shot_stock - batchSettings.shot_used}</strong> dari {batchSettings.shot_stock}
+                    <button style={{ ...st.btnSmall, marginTop: '8px', background: batchSettings.is_active ? '#c0392b' : '#2d7a4f' }} onClick={toggleBatchActive}>
+                      {batchSettings.is_active ? 'Matikan Batch 2 Sekarang' : 'Aktifkan Batch 2 Sekarang'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div style={st.sectionBox}>
+                <h3 style={{ color: '#1a3d2b', marginBottom: '8px' }}>Menu Eligible Batch 2</h3>
+                <p style={{ fontSize: '12px', color: '#888', marginTop: '-4px', marginBottom: '8px' }}>
+                  Atur di tab Menu (centang "Tersedia di Batch 2"). Daftar menu yang sudah eligible:
+                </p>
+                {menuItems.filter(m => m.batch2_eligible).length === 0 && <p style={{ fontSize: '13px', color: '#888' }}>Belum ada menu yang di-set untuk Batch 2.</p>}
+                {menuItems.filter(m => m.batch2_eligible).map(m => (
+                  <span key={m.id} style={{ ...st.tag, marginRight: '6px', marginBottom: '6px', display: 'inline-block' }}>{m.name}</span>
+                ))}
+              </div>
             </div>
           )}
 
