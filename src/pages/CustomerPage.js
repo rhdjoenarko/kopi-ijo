@@ -309,17 +309,26 @@ function CustomerPage() {
     setLoading(true); setError(''); setShowSummary(false)
     const { finalTotal, totalDiscount } = getCartTotals()
     const orderTotal = finalTotal
-    const { data: customerData } = await supabase.from('customers').select('credit_balance').eq('id', customer.id).single()
+    const { data: customerData } = await supabase.from('customers').select('credit_balance, bonus_balance').eq('id', customer.id).single()
+    const availableBonus = customerData?.bonus_balance || 0
     const availableCredit = customerData?.credit_balance || 0
-    const creditUsed = Math.min(availableCredit, orderTotal)
+
+    const bonusUsed = Math.min(availableBonus, orderTotal)
+    const remainingAfterBonus = orderTotal - bonusUsed
+    const creditUsed = Math.min(availableCredit, remainingAfterBonus)
+
+    if (bonusUsed > 0) {
+      await supabase.from('customers').update({ bonus_balance: availableBonus - bonusUsed }).eq('id', customer.id)
+    }
     if (creditUsed > 0) {
       await supabase.from('customers').update({ credit_balance: availableCredit - creditUsed }).eq('id', customer.id)
     }
-    const isPaid = creditUsed >= orderTotal
+    const isPaid = (bonusUsed + creditUsed) >= orderTotal
     const { data: order, error: orderError } = await supabase.from('orders').insert({
       customer_id: customer.id,
       order_for_date: orderTarget.toLocaleDateString('en-CA'),
       credit_used: creditUsed,
+      bonus_used: bonusUsed,
       promo_discount: totalDiscount,
       voided: false,
       paid: isPaid,
@@ -555,16 +564,22 @@ function CustomerPage() {
                     .filter(o => !o.paid && !o.voided)
                     .reduce((sum, o) => {
                       const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-                      return sum + Math.max(0, subtotal - (o.promo_discount || 0) - (o.credit_used || 0))
+                      return sum + Math.max(0, subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0))
                     }, 0)
                   const hasUnclaimed = orders.some(o => !o.paid && !o.voided && !o.transfer_claimed)
                   return (
                     <>
                       <div style={{ ...st.metricCard, marginBottom: '12px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: totalBelumBayar > 0 ? '8px' : 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                           <span style={{ fontSize: '13px', color: '#5a5248' }}>Saldo Credit</span>
                           <strong style={{ color: '#1a3d2b' }}>Rp {(customer?.credit_balance || 0).toLocaleString('id-ID')}</strong>
                         </div>
+                        {customer?.bonus_balance > 0 && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '13px', color: '#5a5248' }}>🎁 Saldo Bonus</span>
+                            <strong style={{ color: '#e67e22' }}>Rp {customer.bonus_balance.toLocaleString('id-ID')}</strong>
+                          </div>
+                        )}
                         {totalBelumBayar > 0 && (
                           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                             <span style={{ fontSize: '13px', color: '#5a5248' }}>Total Belum Dibayar</span>
@@ -603,7 +618,7 @@ function CustomerPage() {
                 {orders.map(o => {
                   const orderTotal = o.order_items.reduce((sum, oi) => sum + oi.price_at_order * oi.quantity, 0)
                   const isExpanded = expandedOrder === o.id
-                  const sisaTagihan = Math.max(0, orderTotal - (o.promo_discount || 0) - (o.credit_used || 0))
+                  const sisaTagihan = Math.max(0, orderTotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0))
                   const effectivePaid = o.paid || sisaTagihan === 0
                   const borderColor = o.voided ? '#ccc' : effectivePaid ? '#1a3d2b' : o.transfer_claimed ? '#2d7a4f' : '#e67e22'
                   return (
@@ -622,6 +637,11 @@ function CustomerPage() {
                               {o.promo_discount > 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#e67e22' }}>
                                   <span>🏷 Diskon Promo</span><span>- Rp {o.promo_discount.toLocaleString('id-ID')}</span>
+                                </div>
+                              )}
+                              {o.bonus_used > 0 && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#e67e22' }}>
+                                  <span>🎁 Bonus dipakai</span><span>- Rp {o.bonus_used.toLocaleString('id-ID')}</span>
                                 </div>
                               )}
                               {o.credit_used > 0 && (
