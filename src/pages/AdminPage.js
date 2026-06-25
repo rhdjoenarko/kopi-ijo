@@ -282,9 +282,12 @@ function AdminPage() {
     const swapIdx = direction === 'up' ? idx - 1 : idx + 1
     if (swapIdx < 0 || swapIdx >= promos.length) return
     const a = promos[idx], b = promos[swapIdx]
+    const newPromos = [...promos]
+    newPromos[idx] = { ...b, priority: a.priority }
+    newPromos[swapIdx] = { ...a, priority: b.priority }
+    setPromos(newPromos)
     await supabase.from('promos').update({ priority: b.priority }).eq('id', a.id)
     await supabase.from('promos').update({ priority: a.priority }).eq('id', b.id)
-    fetchPromos()
   }
 
   async function togglePromoActive(id, current) {
