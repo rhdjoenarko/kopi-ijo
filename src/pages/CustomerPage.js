@@ -92,6 +92,7 @@ function CustomerPage() {
   const [activePromos, setActivePromos] = useState([])
   const [batchSettings, setBatchSettings] = useState(null)
   const [selectedBatch, setSelectedBatch] = useState('po')
+  const [batchDefaultSet, setBatchDefaultSet] = useState(false)
   const [batchWarning, setBatchWarning] = useState('')
   const [orderTarget, setOrderTarget] = useState(getOrderTarget(7))
   const [isNextDay, setIsNextDay] = useState(false)
@@ -130,6 +131,13 @@ function CustomerPage() {
     }
     loadSettings()
   }, [])
+
+  useEffect(() => {
+    if (batchSettings && !batchDefaultSet && isBatch2Open(batchSettings)) {
+      setSelectedBatch('batch2')
+      setBatchDefaultSet(true)
+    }
+  }, [batchSettings, batchDefaultSet])
 
   useEffect(() => {
     if (step === 'menu') { fetchMenu(); fetchMyOrders() }
@@ -356,7 +364,8 @@ function CustomerPage() {
       const remainingShots = freshBatch ? freshBatch.shot_stock - freshBatch.shot_used : 0
 
       if (!freshBatch || !freshBatch.is_active || remainingShots < shotsNeeded) {
-        setBatchWarning('Stok shot Batch 2 sudah habis atau sudah tutup. Ordermu akan masuk untuk BESOK (Batch PO) ya!')
+        const newTarget = getOrderTarget(orderCutoff, closedDays)
+        setBatchWarning(`Maaf, stok untuk Order Langsung sudah habis atau sudah tutup. Ordermu otomatis masuk sebagai Pre-Order untuk ${formatOrderDate(newTarget)}.`)
         setSelectedBatch('po')
         actualBatchType = 'po'
         deliveryDate = getOrderTarget(orderCutoff, closedDays).toLocaleDateString('en-CA')
@@ -459,10 +468,12 @@ function CustomerPage() {
               <div style={st.greetingMsg}>Makasih udah support Kopi Ijø hari ini. Yuk, pilih minumanmu!</div>
             </div>
 
-            <div style={isNextDay ? st.notifNextDay : st.notifToday}>
-              {isNextDay
-                ? <span>⚠️ <strong>Sudah lewat jam {orderCutoff}:00 — kamu sedang order untuk {formatOrderDate(orderTarget)}</strong></span>
-                : <span>📅 Order untuk hari ini: <strong>{formatOrderDate(orderTarget)}</strong></span>
+            <div style={selectedBatch === 'batch2' && isBatch2Open(batchSettings) ? st.notifToday : (isNextDay ? st.notifNextDay : st.notifToday)}>
+              {selectedBatch === 'batch2' && isBatch2Open(batchSettings)
+                ? <span>⚡ <strong>Order Langsung — delivery hari ini, {formatOrderDate(new Date())}</strong></span>
+                : isNextDay
+                  ? <span>⚠️ <strong>Sudah lewat jam {orderCutoff}:00 — kamu sedang order untuk {formatOrderDate(orderTarget)}</strong></span>
+                  : <span>📅 Order untuk hari ini: <strong>{formatOrderDate(orderTarget)}</strong></span>
               }
             </div>
 
@@ -479,21 +490,21 @@ function CustomerPage() {
             {isBatch2Open(batchSettings) && (
               <div style={{ background: '#e8f0fe', borderBottom: '2px solid #1a3d2b', padding: '12px 16px' }}>
                 <div style={{ fontSize: '13px', color: '#1a3d2b', fontWeight: '500', marginBottom: '8px' }}>
-                  ⚡ Batch 2 sedang buka! Mau order untuk sekarang atau besok?
+                  ⚡ Order Langsung tersedia sekarang! Pilih jenis order:
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button style={{ ...st.tab, flex: 1, ...(selectedBatch === 'batch2' ? st.tabActive : {}) }}
                     onClick={() => { setSelectedBatch('batch2'); setBatchWarning('') }}>
-                    ⚡ Sekarang (Batch 2)
+                    ⚡ Order Langsung (Hari Ini)
                   </button>
                   <button style={{ ...st.tab, flex: 1, ...(selectedBatch === 'po' ? st.tabActive : {}) }}
                     onClick={() => { setSelectedBatch('po'); setBatchWarning('') }}>
-                    📅 Besok (PO)
+                    📅 Pre-Order ({formatOrderDate(orderTarget)})
                   </button>
                 </div>
                 {selectedBatch === 'batch2' && (
                   <div style={{ fontSize: '11px', color: '#5a5248', marginTop: '6px' }}>
-                    Sisa stok shot: {batchSettings.shot_stock - batchSettings.shot_used}. Hanya menu tertentu yang tersedia.
+                    Menu terbatas untuk Order Langsung — delivery hari ini, {formatOrderDate(new Date())}.
                   </div>
                 )}
               </div>
@@ -801,10 +812,12 @@ function CustomerPage() {
               <span style={{ letterSpacing: '0.5px' }}>KONFIRMASI ORDER</span>
             </div>
             <div style={{ padding: '16px' }}>
-              <div style={isNextDay ? st.notifNextDay : st.notifToday}>
-                {isNextDay
-                  ? <span>⚠️ <strong>Order untuk {formatOrderDate(orderTarget)}</strong></span>
-                  : <span>📅 Order untuk hari ini: <strong>{formatOrderDate(orderTarget)}</strong></span>}
+              <div style={selectedBatch === 'batch2' && isBatch2Open(batchSettings) ? st.notifToday : (isNextDay ? st.notifNextDay : st.notifToday)}>
+                {selectedBatch === 'batch2' && isBatch2Open(batchSettings)
+                  ? <span>⚡ <strong>Order Langsung — delivery hari ini, {formatOrderDate(new Date())}</strong></span>
+                  : isNextDay
+                    ? <span>⚠️ <strong>Pre-Order untuk {formatOrderDate(orderTarget)}</strong></span>
+                    : <span>📅 Pre-Order untuk hari ini: <strong>{formatOrderDate(orderTarget)}</strong></span>}
               </div>
               {getMergedCart().map(cartItem => (
                 <div key={cartItem.cartId} style={{ borderBottom: '0.5px solid #d6cfc4', paddingBottom: '10px', marginBottom: '10px' }}>
