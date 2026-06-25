@@ -309,6 +309,7 @@ function CustomerPage() {
     setLoading(true); setError(''); setShowSummary(false)
     const { finalTotal, totalDiscount } = getCartTotals()
     const orderTotal = finalTotal
+    console.log('DEBUG checkout:', { finalTotal, totalDiscount, activePromos, cart })
     const { data: customerData } = await supabase.from('customers').select('credit_balance').eq('id', customer.id).single()
     const availableCredit = customerData?.credit_balance || 0
     const creditUsed = Math.min(availableCredit, orderTotal)
