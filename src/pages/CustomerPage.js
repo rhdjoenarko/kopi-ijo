@@ -59,7 +59,7 @@ function formatOrderFor(orderForDate, createdAt, cutoffHour) {
   return formatOrderDate(target)
 }
 
-function isBatch2Open(batchSettings) {
+function isOrderLangsungOpen(batchSettings) {
   if (!batchSettings || !batchSettings.is_active) return false
   const now = new Date()
   const today = now.toLocaleDateString('en-CA')
@@ -77,9 +77,11 @@ function CustomerPage() {
   const [name, setName] = useState('')
   const [customer, setCustomer] = useState(null)
   const [step, setStep] = useState('phone')
-  const [activeTab, setActiveTab] = useState('menu')
-  const [menuItems, setMenuItems] = useState([])
+  const [activeTab, setActiveTab] = useState('po')
+  const [menuItemsPo, setMenuItemsPo] = useState([])
+  const [menuItemsLangsung, setMenuItemsLangsung] = useState([])
   const [cart, setCart] = useState([])
+  const [cartMode, setCartMode] = useState('po') // which tab the current cart belongs to
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -88,11 +90,9 @@ function CustomerPage() {
   const [expandedOrder, setExpandedOrder] = useState(null)
   const [orderCutoff, setOrderCutoff] = useState(7)
   const [paymentAccounts, setPaymentAccounts] = useState([])
-  const [closedDays, setClosedDays] = useState([]) // eslint-disable-line no-unused-vars
+  const [closedDays, setClosedDays] = useState([])
   const [activePromos, setActivePromos] = useState([])
   const [batchSettings, setBatchSettings] = useState(null)
-  const [selectedBatch, setSelectedBatch] = useState('po')
-  const [batchDefaultSet, setBatchDefaultSet] = useState(false)
   const [batchWarning, setBatchWarning] = useState('')
   const [orderTarget, setOrderTarget] = useState(getOrderTarget(7))
   const [isNextDay, setIsNextDay] = useState(false)
@@ -100,6 +100,8 @@ function CustomerPage() {
   const [transferClaiming, setTransferClaiming] = useState(false)
   const [transferClaimed, setTransferClaimed] = useState(false)
   const [showFloatingCart, setShowFloatingCart] = useState(true)
+
+  const langsungOpen = isOrderLangsungOpen(batchSettings)
 
   useEffect(() => {
     async function loadSettings() {
@@ -133,16 +135,16 @@ function CustomerPage() {
   }, [])
 
   useEffect(() => {
-    if (batchSettings && !batchDefaultSet && isBatch2Open(batchSettings)) {
-      setSelectedBatch('batch2')
-      setBatchDefaultSet(true)
-    }
-  }, [batchSettings, batchDefaultSet])
-
-  useEffect(() => {
-    if (step === 'menu') { fetchMenu(); fetchMyOrders() }
+    if (step === 'menu') { fetchMenuPo(); fetchMenuLangsung(); fetchMyOrders() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, selectedBatch])
+  }, [step])
+
+  // If "Order Langsung" tab is active but it just closed, bounce back to Pre-Order tab
+  useEffect(() => {
+    if (activeTab === 'langsung' && !langsungOpen) {
+      setActiveTab('po')
+    }
+  }, [activeTab, langsungOpen])
 
   useEffect(() => {
     function handleScroll() {
@@ -156,25 +158,39 @@ function CustomerPage() {
     return () => window.removeEventListener('scroll', handleScroll)
   }, [cart])
 
-  async function fetchMenu() {
-    let query = supabase
+  async function fetchMenuPo() {
+    const { data, error } = await supabase
       .from('menu_items')
       .select(`*, menu_item_option_groups(option_group_id, option_groups(id, name, required, option_choices(id, label, sort_order, price_addition)))`)
       .eq('active', true)
+      .contains('available_days', [todayIndex])
       .order('sort_order', { ascending: true })
-
-    if (selectedBatch === 'batch2') {
-      query = query.eq('batch2_eligible', true)
-    } else {
-      query = query.contains('available_days', [todayIndex])
-    }
-
-    const { data, error } = await query
     if (error) { setError('Gagal load menu.'); return }
     const { data: totals } = await supabase.from('daily_item_totals').select('*')
     const totalsMap = {}
     if (totals) totals.forEach(t => { totalsMap[t.menu_item_id] = t.total_ordered })
-    setMenuItems(data.map(item => ({
+    setMenuItemsPo(data.map(item => ({
+      ...item,
+      soldToday: totalsMap[item.id] || 0,
+      optionGroups: item.menu_item_option_groups.map(r => ({
+        ...r.option_groups,
+        choices: [...r.option_groups.option_choices].sort((a, b) => a.sort_order - b.sort_order)
+      }))
+    })))
+  }
+
+  async function fetchMenuLangsung() {
+    const { data, error } = await supabase
+      .from('menu_items')
+      .select(`*, menu_item_option_groups(option_group_id, option_groups(id, name, required, option_choices(id, label, sort_order, price_addition)))`)
+      .eq('active', true)
+      .eq('batch2_eligible', true)
+      .order('sort_order', { ascending: true })
+    if (error) return
+    const { data: totals } = await supabase.from('daily_item_totals').select('*')
+    const totalsMap = {}
+    if (totals) totals.forEach(t => { totalsMap[t.menu_item_id] = t.total_ordered })
+    setMenuItemsLangsung(data.map(item => ({
       ...item,
       soldToday: totalsMap[item.id] || 0,
       optionGroups: item.menu_item_option_groups.map(r => ({
@@ -234,7 +250,13 @@ function CustomerPage() {
     setCustomer(data); setStep('menu')
   }
 
-  function addToCart(item) {
+  function addToCart(item, mode) {
+    // Switching between PO and Langsung clears the cart, since they're mutually exclusive carts
+    if (cart.length > 0 && cartMode !== mode) {
+      if (!window.confirm('Kamu sedang punya item di keranjang ' + (cartMode === 'po' ? 'Pre-Order' : 'Order Langsung') + '. Ganti ke ' + (mode === 'po' ? 'Pre-Order' : 'Order Langsung') + ' dan kosongkan keranjang?')) return
+      setCart([])
+    }
+    setCartMode(mode)
     const defaultOptions = {}
     item.optionGroups.forEach(og => {
       if (og.required && og.choices.length > 0) defaultOptions[og.id] = og.choices[0]
@@ -341,12 +363,11 @@ function CustomerPage() {
   async function handleOrder() {
     setLoading(true); setError(''); setShowSummary(false)
 
-    const isBatch2Order = selectedBatch === 'batch2' && isBatch2Open(batchSettings)
+    const wantsLangsung = cartMode === 'langsung'
     let actualBatchType = 'po'
     let deliveryDate = orderTarget.toLocaleDateString('en-CA')
 
-    if (isBatch2Order) {
-      // Hitung total shot yang dibutuhkan
+    if (wantsLangsung) {
       let shotsNeeded = 0
       cart.forEach(c => {
         shotsNeeded += (c.item.shots_per_item || 1) * c.quantity
@@ -358,7 +379,6 @@ function CustomerPage() {
         })
       })
 
-      // Re-fetch batch settings untuk data terbaru (hindari race condition)
       const today = new Date().toLocaleDateString('en-CA')
       const { data: freshBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
       const remainingShots = freshBatch ? freshBatch.shot_stock - freshBatch.shot_used : 0
@@ -366,13 +386,15 @@ function CustomerPage() {
       if (!freshBatch || !freshBatch.is_active || remainingShots < shotsNeeded) {
         const newTarget = getOrderTarget(orderCutoff, closedDays)
         setBatchWarning(`Maaf, stok untuk Order Langsung sudah habis atau sudah tutup. Ordermu otomatis masuk sebagai Pre-Order untuk ${formatOrderDate(newTarget)}.`)
-        setSelectedBatch('po')
         actualBatchType = 'po'
         deliveryDate = newTarget.toLocaleDateString('en-CA')
+        const { data: refreshedBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
+        if (refreshedBatch) setBatchSettings(refreshedBatch)
       } else {
         actualBatchType = 'batch2'
         deliveryDate = today
         await supabase.from('batch_settings').update({ shot_used: freshBatch.shot_used + shotsNeeded }).eq('id', freshBatch.id)
+        setBatchSettings({ ...freshBatch, shot_used: freshBatch.shot_used + shotsNeeded })
       }
     }
 
@@ -421,17 +443,146 @@ function CustomerPage() {
         }))
       if (optionInserts.length > 0) await supabase.from('order_item_options').insert(optionInserts)
     }
-    const today = new Date().toLocaleDateString('en-CA')
-    const { data: refreshedBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
-    if (refreshedBatch) setBatchSettings(refreshedBatch)
 
     setLoading(false); setShowSuccessModal(true); setCart([])
     setTimeout(() => {
       setShowSuccessModal(false)
+      setBatchWarning('')
       setActiveTab('riwayat')
       fetchMyOrders()
       refreshCustomer()
-    }, 1500)
+    }, batchWarning ? 2800 : 1500)
+  }
+
+  function renderMenuList(items, mode) {
+    return (
+      <div style={{ padding: '0 16px 16px' }}>
+        {items.length === 0 && <p style={{ color: '#5a5248' }}>Tidak ada menu tersedia.</p>}
+        {items.map(item => {
+          const isSoldOut = item.daily_limit !== null && item.soldToday >= item.daily_limit
+          const itemPromos = getActiveProductPromo(item.id)
+          let promoPrice = item.price
+          if (itemPromos) {
+            itemPromos.forEach(p => {
+              if (p.discount_type === 'percent') promoPrice -= promoPrice * (p.discount_amount / 100)
+              else promoPrice -= p.discount_amount
+            })
+            promoPrice = Math.max(0, promoPrice)
+          }
+          return (
+            <div key={item.id} style={{ ...st.menuItem, opacity: isSoldOut ? 0.5 : 1, padding: 0, overflow: 'hidden' }}>
+              {item.image_url && (
+                <div style={{ position: 'relative' }}>
+                  <img src={item.image_url} alt={item.name} style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', display: 'block' }} />
+                  {item.daily_limit && !isSoldOut && (
+                    <span style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(0,0,0,0.45)', color: '#fff', fontSize: '11px', padding: '3px 8px', borderRadius: '20px' }}>
+                      Sisa {item.daily_limit - item.soldToday}
+                    </span>
+                  )}
+                  {isSoldOut && (
+                    <span style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(192,57,43,0.85)', color: '#fff', fontSize: '11px', padding: '3px 8px', borderRadius: '20px' }}>Habis</span>
+                  )}
+                </div>
+              )}
+              <div style={{ ...st.menuRow, padding: '12px' }}>
+                <div>
+                  <strong style={{ color: '#2c2c2a' }}>{item.name}</strong>
+                  <div style={{ fontSize: '12px', color: '#1a3d2b', marginTop: '2px' }}>
+                    {itemPromos ? (
+                      <>
+                        <span style={{ textDecoration: 'line-through', color: '#888', marginRight: '6px' }}>Rp {item.price.toLocaleString('id-ID')}</span>
+                        <span style={{ color: '#c0392b', fontWeight: 'bold' }}>Rp {promoPrice.toLocaleString('id-ID')}</span>
+                      </>
+                    ) : (
+                      <span>Rp {item.price.toLocaleString('id-ID')}</span>
+                    )}
+                    {!item.image_url && isSoldOut && <span style={{ color: '#c0392b', marginLeft: '6px' }}>· Habis</span>}
+                    {!item.image_url && item.daily_limit && !isSoldOut && <span style={{ color: '#888', marginLeft: '6px' }}>· Sisa {item.daily_limit - item.soldToday}</span>}
+                  </div>
+                </div>
+                <button style={{ ...st.addBtn, ...(isSoldOut ? st.addBtnDisabled : {}) }}
+                  onClick={() => !isSoldOut && addToCart(item, mode)} disabled={isSoldOut}>
+                  + Tambah
+                </button>
+              </div>
+            </div>
+          )
+        })}
+
+        {cart.length > 0 && cartMode === mode && showFloatingCart && (
+          <button style={st.floatingCartBtn} onClick={() => document.getElementById('cart-section')?.scrollIntoView({ behavior: 'smooth' })}>
+            🛒 {cart.reduce((sum, c) => sum + c.quantity, 0)} item · Rp {total.toLocaleString('id-ID')}
+          </button>
+        )}
+
+        {cart.length > 0 && cartMode === mode && (
+          <div id="cart-section" style={st.cartBox}>
+            <div style={st.cartHeader}>
+              <span>🛒</span>
+              <span style={{ letterSpacing: '0.5px' }}>KERANJANG</span>
+            </div>
+            <div style={{ padding: '12px' }}>
+              {getMergedCart().map(cartItem => (
+                <div key={cartItem.cartId} style={st.cartItem}>
+                  <div style={st.menuRow}>
+                    <strong style={{ fontSize: '13px', color: '#2c2c2a' }}>{cartItem.item.name}</strong>
+                    <button style={st.btnRemove} onClick={() => removeFromCart(cartItem.cartId)}>✕</button>
+                  </div>
+                  {cartItem.item.optionGroups.map(og => (
+                    <div key={og.id} style={{ marginTop: '8px' }}>
+                      <span style={st.optionLabel}>
+                        {og.name}
+                        {og.required
+                          ? <span style={{ color: '#c0392b', marginLeft: '4px', fontSize: '11px' }}>*wajib</span>
+                          : <span style={{ color: '#888', marginLeft: '4px', fontSize: '11px' }}>(opsional)</span>}:
+                      </span>
+                      <div style={st.optionBtns}>
+                        {!og.required && (
+                          <button style={{ ...st.optBtn, ...(!cartItem.selectedOptions[og.id] ? st.optBtnActive : {}) }}
+                            onClick={() => updateOption(cartItem.cartId, og.id, null)}>Tidak ada</button>
+                        )}
+                        {og.choices.map(choice => (
+                          <button key={choice.id}
+                            style={{ ...st.optBtn, ...(cartItem.selectedOptions[og.id]?.id === choice.id ? st.optBtnActive : {}) }}
+                            onClick={() => updateOption(cartItem.cartId, og.id, choice)}>
+                            {choice.label}{choice.price_addition > 0 ? ` (+Rp ${choice.price_addition.toLocaleString('id-ID')})` : ''}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  <div style={st.qtyRow}>
+                    <button style={st.qtyBtn} onClick={() => updateQuantity(cartItem.cartId, -1)}>−</button>
+                    <span style={{ minWidth: '20px', textAlign: 'center', fontSize: '13px', color: '#2c2c2a' }}>{cartItem.quantity}</span>
+                    <button style={st.qtyBtn} onClick={() => updateQuantity(cartItem.cartId, 1)}>+</button>
+                    <span style={{ marginLeft: 'auto', color: '#1a3d2b', fontWeight: 'bold', fontSize: '13px' }}>
+                      Rp {getItemPrice(cartItem).toLocaleString('id-ID')}
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {cartTotals.totalDiscount > 0 && (
+                <div style={{ marginTop: '4px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#5a5248' }}>
+                    <span>Subtotal</span><span>Rp {cartTotals.subtotalOriginal.toLocaleString('id-ID')}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#c0392b' }}>
+                    <span>Diskon Promo</span><span>- Rp {cartTotals.totalDiscount.toLocaleString('id-ID')}</span>
+                  </div>
+                </div>
+              )}
+              <div style={st.totalRow}>
+                <strong>Total</strong>
+                <strong style={{ color: '#1a3d2b' }}>Rp {total.toLocaleString('id-ID')}</strong>
+              </div>
+              <button style={{ ...st.btn, position: 'sticky', bottom: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.25)' }} onClick={() => setShowSummary(true)} disabled={loading}>
+                Pesan Sekarang ({cart.reduce((sum, c) => sum + c.quantity, 0)}) · Rp {total.toLocaleString('id-ID')}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -472,15 +623,6 @@ function CustomerPage() {
               <div style={st.greetingMsg}>Makasih udah support Kopi Ijø hari ini. Yuk, pilih minumanmu!</div>
             </div>
 
-            <div style={selectedBatch === 'batch2' && isBatch2Open(batchSettings) ? st.notifToday : (isNextDay ? st.notifNextDay : st.notifToday)}>
-              {selectedBatch === 'batch2' && isBatch2Open(batchSettings)
-                ? <span>⚡ <strong>Order Langsung — delivery hari ini, {formatOrderDate(new Date())}</strong></span>
-                : isNextDay
-                  ? <span>⚠️ <strong>Sudah lewat jam {orderCutoff}:00 — kamu sedang order untuk {formatOrderDate(orderTarget)}</strong></span>
-                  : <span>📅 Order untuk hari ini: <strong>{formatOrderDate(orderTarget)}</strong></span>
-              }
-            </div>
-
             {activePromos.length > 0 && (
               <div style={{ background: '#fef3e2', borderBottom: '2px solid #e67e22', padding: '10px 16px' }}>
                 {activePromos.map(p => (
@@ -491,29 +633,6 @@ function CustomerPage() {
               </div>
             )}
 
-            {isBatch2Open(batchSettings) && (
-              <div style={{ background: '#e8f0fe', borderBottom: '2px solid #1a3d2b', padding: '12px 16px' }}>
-                <div style={{ fontSize: '13px', color: '#1a3d2b', fontWeight: '500', marginBottom: '8px' }}>
-                  ⚡ Order Langsung tersedia sekarang! Pilih jenis order:
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button style={{ ...st.tab, flex: 1, ...(selectedBatch === 'batch2' ? st.tabActive : {}) }}
-                    onClick={() => { setSelectedBatch('batch2'); setBatchWarning('') }}>
-                    ⚡ Order Langsung (Hari Ini)
-                  </button>
-                  <button style={{ ...st.tab, flex: 1, ...(selectedBatch === 'po' ? st.tabActive : {}) }}
-                    onClick={() => { setSelectedBatch('po'); setBatchWarning('') }}>
-                    📅 Pre-Order ({formatOrderDate(orderTarget)})
-                  </button>
-                </div>
-                {selectedBatch === 'batch2' && (
-                  <div style={{ fontSize: '11px', color: '#5a5248', marginTop: '6px' }}>
-                    Menu terbatas untuk Order Langsung — delivery hari ini, {formatOrderDate(new Date())}.
-                  </div>
-                )}
-              </div>
-            )}
-
             {batchWarning && (
               <div style={{ background: '#fef3e2', border: '2px solid #e67e22', borderRadius: '8px', padding: '10px 16px', margin: '8px 16px', fontSize: '13px', color: '#7d3c00' }}>
                 ⚠️ {batchWarning}
@@ -521,137 +640,41 @@ function CustomerPage() {
             )}
 
             <div style={st.tabs}>
-              <button style={{ ...st.tab, ...(activeTab === 'menu' ? st.tabActive : {}) }} onClick={() => setActiveTab('menu')}>☕ Menu</button>
-              <button style={{ ...st.tab, ...(activeTab === 'riwayat' ? st.tabActive : {}) }} onClick={() => { setActiveTab('riwayat'); fetchMyOrders() }}>📋 Riwayat & Tagihan</button>
+              {langsungOpen && (
+                <button style={{ ...st.tab, ...(activeTab === 'langsung' ? st.tabActive : {}) }} onClick={() => setActiveTab('langsung')}>
+                  ⚡ Order Langsung
+                </button>
+              )}
+              <button style={{ ...st.tab, ...(activeTab === 'po' ? st.tabActive : {}) }} onClick={() => setActiveTab('po')}>
+                📅 Pre-Order
+              </button>
+              <button style={{ ...st.tab, ...(activeTab === 'riwayat' ? st.tabActive : {}) }} onClick={() => { setActiveTab('riwayat'); fetchMyOrders() }}>
+                📋 Riwayat & Tagihan
+              </button>
             </div>
 
-            {activeTab === 'menu' && (
-              <div style={{ padding: '0 16px 16px' }}>
-                {menuItems.length === 0 && <p style={{ color: '#5a5248' }}>Tidak ada menu tersedia untuk {formatOrderDate(orderTarget)}.</p>}
-                {menuItems.map(item => {
-                  const isSoldOut = item.daily_limit !== null && item.soldToday >= item.daily_limit
-                  const itemPromos = getActiveProductPromo(item.id)
-                  let promoPrice = item.price
-                  if (itemPromos) {
-                    itemPromos.forEach(p => {
-                      if (p.discount_type === 'percent') promoPrice -= promoPrice * (p.discount_amount / 100)
-                      else promoPrice -= p.discount_amount
-                    })
-                    promoPrice = Math.max(0, promoPrice)
+            {activeTab === 'langsung' && langsungOpen && (
+              <>
+                <div style={st.notifToday}>
+                  ⚡ <strong>Order Langsung — delivery hari ini, {formatOrderDate(new Date())}</strong>
+                </div>
+                <div style={{ padding: '8px 16px 0', fontSize: '12px', color: '#5a5248' }}>
+                  Menu terbatas untuk Order Langsung.
+                </div>
+                {renderMenuList(menuItemsLangsung, 'langsung')}
+              </>
+            )}
+
+            {activeTab === 'po' && (
+              <>
+                <div style={isNextDay ? st.notifNextDay : st.notifToday}>
+                  {isNextDay
+                    ? <span>⚠️ <strong>Sudah lewat jam {orderCutoff}:00 — Pre-Order untuk {formatOrderDate(orderTarget)}</strong></span>
+                    : <span>📅 Pre-Order untuk hari ini: <strong>{formatOrderDate(orderTarget)}</strong></span>
                   }
-                  return (
-                    <div key={item.id} style={{ ...st.menuItem, opacity: isSoldOut ? 0.5 : 1, padding: 0, overflow: 'hidden' }}>
-                      {item.image_url && (
-                        <div style={{ position: 'relative' }}>
-                          <img src={item.image_url} alt={item.name} style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', display: 'block' }} />
-                          {item.daily_limit && !isSoldOut && (
-                            <span style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(0,0,0,0.45)', color: '#fff', fontSize: '11px', padding: '3px 8px', borderRadius: '20px' }}>
-                              Sisa {item.daily_limit - item.soldToday}
-                            </span>
-                          )}
-                          {isSoldOut && (
-                            <span style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(192,57,43,0.85)', color: '#fff', fontSize: '11px', padding: '3px 8px', borderRadius: '20px' }}>Habis</span>
-                          )}
-                        </div>
-                      )}
-                      <div style={{ ...st.menuRow, padding: '12px' }}>
-                        <div>
-                          <strong style={{ color: '#2c2c2a' }}>{item.name}</strong>
-                          <div style={{ fontSize: '12px', color: '#1a3d2b', marginTop: '2px' }}>
-                            {itemPromos ? (
-                              <>
-                                <span style={{ textDecoration: 'line-through', color: '#888', marginRight: '6px' }}>Rp {item.price.toLocaleString('id-ID')}</span>
-                                <span style={{ color: '#c0392b', fontWeight: 'bold' }}>Rp {promoPrice.toLocaleString('id-ID')}</span>
-                              </>
-                            ) : (
-                              <span>Rp {item.price.toLocaleString('id-ID')}</span>
-                            )}
-                            {!item.image_url && isSoldOut && <span style={{ color: '#c0392b', marginLeft: '6px' }}>· Habis</span>}
-                            {!item.image_url && item.daily_limit && !isSoldOut && <span style={{ color: '#888', marginLeft: '6px' }}>· Sisa {item.daily_limit - item.soldToday}</span>}
-                          </div>
-                        </div>
-                        <button style={{ ...st.addBtn, ...(isSoldOut ? st.addBtnDisabled : {}) }}
-                          onClick={() => !isSoldOut && addToCart(item)} disabled={isSoldOut}>
-                          + Tambah
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-
-                {cart.length > 0 && showFloatingCart && (
-                  <button style={st.floatingCartBtn} onClick={() => document.getElementById('cart-section')?.scrollIntoView({ behavior: 'smooth' })}>
-                    🛒 {cart.reduce((sum, c) => sum + c.quantity, 0)} item · Rp {total.toLocaleString('id-ID')}
-                  </button>
-                )}
-
-                {cart.length > 0 && (
-                  <div id="cart-section" style={st.cartBox}>
-                    <div style={st.cartHeader}>
-                      <span>🛒</span>
-                      <span style={{ letterSpacing: '0.5px' }}>KERANJANG</span>
-                    </div>
-                    <div style={{ padding: '12px' }}>
-                      {getMergedCart().map(cartItem => (
-                        <div key={cartItem.cartId} style={st.cartItem}>
-                          <div style={st.menuRow}>
-                            <strong style={{ fontSize: '13px', color: '#2c2c2a' }}>{cartItem.item.name}</strong>
-                            <button style={st.btnRemove} onClick={() => removeFromCart(cartItem.cartId)}>✕</button>
-                          </div>
-                          {cartItem.item.optionGroups.map(og => (
-                            <div key={og.id} style={{ marginTop: '8px' }}>
-                              <span style={st.optionLabel}>
-                                {og.name}
-                                {og.required
-                                  ? <span style={{ color: '#c0392b', marginLeft: '4px', fontSize: '11px' }}>*wajib</span>
-                                  : <span style={{ color: '#888', marginLeft: '4px', fontSize: '11px' }}>(opsional)</span>}:
-                              </span>
-                              <div style={st.optionBtns}>
-                                {!og.required && (
-                                  <button style={{ ...st.optBtn, ...(!cartItem.selectedOptions[og.id] ? st.optBtnActive : {}) }}
-                                    onClick={() => updateOption(cartItem.cartId, og.id, null)}>Tidak ada</button>
-                                )}
-                                {og.choices.map(choice => (
-                                  <button key={choice.id}
-                                    style={{ ...st.optBtn, ...(cartItem.selectedOptions[og.id]?.id === choice.id ? st.optBtnActive : {}) }}
-                                    onClick={() => updateOption(cartItem.cartId, og.id, choice)}>
-                                    {choice.label}{choice.price_addition > 0 ? ` (+Rp ${choice.price_addition.toLocaleString('id-ID')})` : ''}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                          <div style={st.qtyRow}>
-                            <button style={st.qtyBtn} onClick={() => updateQuantity(cartItem.cartId, -1)}>−</button>
-                            <span style={{ minWidth: '20px', textAlign: 'center', fontSize: '13px', color: '#2c2c2a' }}>{cartItem.quantity}</span>
-                            <button style={st.qtyBtn} onClick={() => updateQuantity(cartItem.cartId, 1)}>+</button>
-                            <span style={{ marginLeft: 'auto', color: '#1a3d2b', fontWeight: 'bold', fontSize: '13px' }}>
-                              Rp {getItemPrice(cartItem).toLocaleString('id-ID')}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                      {cartTotals.totalDiscount > 0 && (
-                        <div style={{ marginTop: '4px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#5a5248' }}>
-                            <span>Subtotal</span><span>Rp {cartTotals.subtotalOriginal.toLocaleString('id-ID')}</span>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#c0392b' }}>
-                            <span>Diskon Promo</span><span>- Rp {cartTotals.totalDiscount.toLocaleString('id-ID')}</span>
-                          </div>
-                        </div>
-                      )}
-                      <div style={st.totalRow}>
-                        <strong>Total</strong>
-                        <strong style={{ color: '#1a3d2b' }}>Rp {total.toLocaleString('id-ID')}</strong>
-                      </div>
-                      <button style={{ ...st.btn, position: 'sticky', bottom: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.25)' }} onClick={() => setShowSummary(true)} disabled={loading}>
-                        Pesan Sekarang ({cart.reduce((sum, c) => sum + c.quantity, 0)}) · Rp {total.toLocaleString('id-ID')}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+                </div>
+                {renderMenuList(menuItemsPo, 'po')}
+              </>
             )}
 
             {activeTab === 'riwayat' && (
@@ -733,6 +756,7 @@ function CustomerPage() {
                           <div style={st.meta}>Dipesan: {formatTimestamp(o.created_at)}</div>
                           <div style={{ fontSize: '12px', color: '#1a3d2b', fontWeight: '500', marginTop: '2px' }}>
                             Delivery: {formatOrderFor(o.order_for_date, o.created_at, orderCutoff)}
+                            {o.batch_type === 'batch2' && <span style={{ marginLeft: '6px', color: '#e67e22' }}>⚡ Langsung</span>}
                           </div>
                           {!o.voided && (
                             <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '0.5px solid #d6cfc4' }}>
@@ -742,6 +766,11 @@ function CustomerPage() {
                               {o.promo_discount > 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#e67e22' }}>
                                   <span>🏷 Diskon Promo</span><span>- Rp {o.promo_discount.toLocaleString('id-ID')}</span>
+                                </div>
+                              )}
+                              {o.bonus_used > 0 && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#e67e22' }}>
+                                  <span>🎁 Bonus dipakai</span><span>- Rp {o.bonus_used.toLocaleString('id-ID')}</span>
                                 </div>
                               )}
                               {o.manual_discount > 0 && (
@@ -803,7 +832,9 @@ function CustomerPage() {
           <div style={{ background: '#ede8df', borderRadius: '16px', padding: '32px 24px', textAlign: 'center', maxWidth: '320px' }}>
             <div style={{ fontSize: '40px', marginBottom: '12px' }}>✓</div>
             <h3 style={{ color: '#1a3d2b', margin: '0 0 8px' }}>Order masuk!</h3>
-            <p style={{ color: '#5a5248', fontSize: '13px', margin: 0 }}>Mengalihkan ke riwayat...</p>
+            <p style={{ color: '#5a5248', fontSize: '13px', margin: 0 }}>
+              {batchWarning ? batchWarning : 'Mengalihkan ke riwayat...'}
+            </p>
           </div>
         </div>
       )}
@@ -816,8 +847,8 @@ function CustomerPage() {
               <span style={{ letterSpacing: '0.5px' }}>KONFIRMASI ORDER</span>
             </div>
             <div style={{ padding: '16px' }}>
-              <div style={selectedBatch === 'batch2' && isBatch2Open(batchSettings) ? st.notifToday : (isNextDay ? st.notifNextDay : st.notifToday)}>
-                {selectedBatch === 'batch2' && isBatch2Open(batchSettings)
+              <div style={cartMode === 'langsung' ? st.notifToday : (isNextDay ? st.notifNextDay : st.notifToday)}>
+                {cartMode === 'langsung'
                   ? <span>⚡ <strong>Order Langsung — delivery hari ini, {formatOrderDate(new Date())}</strong></span>
                   : isNextDay
                     ? <span>⚠️ <strong>Pre-Order untuk {formatOrderDate(orderTarget)}</strong></span>
@@ -863,8 +894,8 @@ const st = {
   greetingMsg: { fontSize: '12px', color: '#5a5248', marginTop: '3px' },
   notifToday: { background: '#d4e8d8', borderBottom: '0.5px solid #b8d4bc', padding: '8px 16px', fontSize: '13px', color: '#1a3d2b' },
   notifNextDay: { background: '#fef3e2', borderBottom: '2px solid #e67e22', padding: '8px 16px', fontSize: '13px', color: '#7d3c00' },
-  tabs: { display: 'flex', gap: '8px', padding: '12px 16px 8px' },
-  tab: { flex: 1, padding: '8px', border: '1px solid #c5bfb7', borderRadius: '8px', background: '#e4ddd2', cursor: 'pointer', fontSize: '13px', color: '#5a5248' },
+  tabs: { display: 'flex', gap: '6px', padding: '12px 16px 8px', flexWrap: 'wrap' },
+  tab: { flex: 1, minWidth: '90px', padding: '8px', border: '1px solid #c5bfb7', borderRadius: '8px', background: '#e4ddd2', cursor: 'pointer', fontSize: '12px', color: '#5a5248' },
   tabActive: { background: '#1a3d2b', color: '#e8f0e2', borderColor: '#1a3d2b' },
   input: { width: '100%', padding: '10px', fontSize: '15px', border: '1px solid #c5bfb7', borderRadius: '8px', marginBottom: '12px', boxSizing: 'border-box', background: '#f7f3ee', color: '#2c2c2a' },
   btn: { width: '100%', padding: '12px', background: '#1a3d2b', color: '#e8f0e2', border: 'none', borderRadius: '8px', fontSize: '15px', cursor: 'pointer', marginTop: '8px' },
@@ -897,4 +928,3 @@ const st = {
 }
 
 export default CustomerPage
-
