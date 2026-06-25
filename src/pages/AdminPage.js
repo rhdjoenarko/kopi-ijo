@@ -35,6 +35,7 @@ function AdminPage() {
   const [manualBillUseCredit, setManualBillUseCredit] = useState({})
   const [bonusAmount, setBonusAmount] = useState({})
   const [bonusNote, setBonusNote] = useState({})
+  const [manualDiscountAmount, setManualDiscountAmount] = useState({})
   const [paymentAccounts, setPaymentAccounts] = useState([])
   const [paForm, setPaForm] = useState({ bank_name: '', account_number: '', account_name: '', sort_order: 0 })
   const [editingPa, setEditingPa] = useState(null)
@@ -233,6 +234,33 @@ function AdminPage() {
     setBonusNote(prev => ({ ...prev, [phone]: '' }))
     fetchAllCustomers()
     fetchAllUnpaid()
+  }
+
+  async function applyManualDiscount(orderId, customerId, phone) {
+    const amount = parseInt(manualDiscountAmount[orderId])
+    if (!amount || amount <= 0) return
+
+    const order = allUnpaidOrders.find(o => o.id === orderId)
+    if (!order) return
+
+    const subtotal = order.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
+    const currentBill = subtotal - (order.promo_discount || 0) - (order.bonus_used || 0) - (order.credit_used || 0)
+    const discountToApply = Math.min(amount, currentBill)
+
+    const newManualDiscount = (order.manual_discount || 0) + discountToApply
+    const newBill = currentBill - discountToApply
+    const isPaid = newBill <= 0
+
+    await supabase.from('orders').update({
+      manual_discount: newManualDiscount,
+      manual_discount_note: manualDiscountAmount[`${orderId}_note`] || order.manual_discount_note || '',
+      paid: isPaid,
+      paid_at: isPaid ? new Date().toISOString() : null
+    }).eq('id', orderId)
+
+    setManualDiscountAmount(prev => ({ ...prev, [orderId]: '' }))
+    fetchAllUnpaid()
+    fetchAllCustomers()
   }
 
   async function handleManualBill(customerId, phone) {
@@ -857,7 +885,7 @@ function AdminPage() {
                         <div style={{ borderTop: '0.5px solid #d6cfc4', paddingTop: '10px' }}>
                           {allOrders.map(o => {
                             const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-                            const sisaTagihan = Math.max(0, subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0))
+                            const sisaTagihan = Math.max(0, subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0) - (o.manual_discount || 0))
                             const lunasByCredit = !o.paid && sisaTagihan === 0
                             const statusColor = o.paid ? '#1a3d2b' : lunasByCredit ? '#2d7a4f' : o.transfer_claimed ? '#856404' : '#e67e22'
                             const statusLabel = o.paid ? '✓ Lunas' : lunasByCredit ? '✓ Lunas (Credit)' : o.transfer_claimed ? '💸 Klaim Transfer' : '⏳ Belum Bayar'
@@ -891,22 +919,43 @@ function AdminPage() {
                                       <span>🎁 Bonus dipakai</span><span>- Rp {o.bonus_used.toLocaleString('id-ID')}</span>
                                     </div>
                                   )}
+                                  {o.bonus_used > 0 && (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#e67e22' }}>
+                                      <span>🎁 Bonus dipakai</span><span>- Rp {o.bonus_used.toLocaleString('id-ID')}</span>
+                                    </div>
+                                  )}
                                   {o.credit_used > 0 && (
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#1a3d2b' }}>
                                       <span>Credit dipakai</span><span>- Rp {o.credit_used.toLocaleString('id-ID')}</span>
+                                    </div>
+                                  )}
+                                  {o.manual_discount > 0 && (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#9b59b6' }}>
+                                      <span>✂️ Potongan Manual</span><span>- Rp {o.manual_discount.toLocaleString('id-ID')}</span>
                                     </div>
                                   )}
                                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 'bold', color: statusColor, marginTop: '4px' }}>
                                     <span>Sisa Tagihan</span><span>Rp {sisaTagihan.toLocaleString('id-ID')}</span>
                                   </div>
                                   {!o.paid && sisaTagihan > 0 && (
-                                    <button style={{ ...st.btnSmall, background: '#2d7a4f', width: '100%', marginTop: '8px' }}
-                                      onClick={async () => {
-                                        await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
-                                        fetchAllUnpaid(); fetchAllCustomers()
-                                      }}>
-                                      Tandai Lunas
-                                    </button>
+                                    <>
+                                      <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                                        <input style={{ ...st.input, marginBottom: 0, flex: 1 }} type="number" placeholder="Potongan manual (Rp)"
+                                          value={manualDiscountAmount[o.id] || ''}
+                                          onChange={e => setManualDiscountAmount(prev => ({ ...prev, [o.id]: e.target.value }))} />
+                                        <button style={{ ...st.btnSmall, background: '#9b59b6' }}
+                                          onClick={() => applyManualDiscount(o.id, customer.id, customer.phone)}>
+                                          Potong
+                                        </button>
+                                      </div>
+                                      <button style={{ ...st.btnSmall, background: '#2d7a4f', width: '100%', marginTop: '6px' }}
+                                        onClick={async () => {
+                                          await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
+                                          fetchAllUnpaid(); fetchAllCustomers()
+                                        }}>
+                                        Tandai Lunas
+                                      </button>
+                                    </>
                                   )}
                                 </div>
                               </div>

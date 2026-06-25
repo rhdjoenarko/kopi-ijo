@@ -564,7 +564,7 @@ function CustomerPage() {
                     .filter(o => !o.paid && !o.voided)
                     .reduce((sum, o) => {
                       const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-                      return sum + Math.max(0, subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0))
+                      return sum + Math.max(0, subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0) - (o.manual_discount || 0))
                     }, 0)
                   const hasUnclaimed = orders.some(o => !o.paid && !o.voided && !o.transfer_claimed)
                   return (
@@ -618,7 +618,7 @@ function CustomerPage() {
                 {orders.map(o => {
                   const orderTotal = o.order_items.reduce((sum, oi) => sum + oi.price_at_order * oi.quantity, 0)
                   const isExpanded = expandedOrder === o.id
-                  const sisaTagihan = Math.max(0, orderTotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0))
+                  const sisaTagihan = Math.max(0, orderTotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0) - (o.manual_discount || 0))
                   const effectivePaid = o.paid || sisaTagihan === 0
                   const borderColor = o.voided ? '#ccc' : effectivePaid ? '#1a3d2b' : o.transfer_claimed ? '#2d7a4f' : '#e67e22'
                   return (
@@ -639,9 +639,9 @@ function CustomerPage() {
                                   <span>🏷 Diskon Promo</span><span>- Rp {o.promo_discount.toLocaleString('id-ID')}</span>
                                 </div>
                               )}
-                              {o.bonus_used > 0 && (
-                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#e67e22' }}>
-                                  <span>🎁 Bonus dipakai</span><span>- Rp {o.bonus_used.toLocaleString('id-ID')}</span>
+                              {o.manual_discount > 0 && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#9b59b6' }}>
+                                  <span>✂️ Potongan Khusus</span><span>- Rp {o.manual_discount.toLocaleString('id-ID')}</span>
                                 </div>
                               )}
                               {o.credit_used > 0 && (
