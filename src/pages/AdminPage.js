@@ -182,7 +182,7 @@ function AdminPage() {
     await supabase.from('customer_credits').insert({ customer_id: customerId, amount, note: topUpNote[phone] || '' })
     const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === phone)
     for (const o of unpaidOrders) {
-      const orderBill = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0)
+      const orderBill = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.manual_discount || 0) - (o.credit_used || 0)
       if (orderBill <= 0) { await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id); continue }
       if (remainingCredit >= orderBill) {
         remainingCredit -= orderBill
@@ -214,7 +214,7 @@ function AdminPage() {
     const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === phone)
     for (const o of unpaidOrders) {
       const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-      const orderBill = subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0)
+      const orderBill = subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.manual_discount || 0) - (o.credit_used || 0)
       if (orderBill <= 0) {
         await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id)
         continue
@@ -555,7 +555,7 @@ function AdminPage() {
       o.order_items.forEach(oi => {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
         const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-        const effectivePaid = o.paid || (o.credit_used || 0) + (o.promo_discount || 0) + (o.bonus_used || 0) >= subtotal
+        const effectivePaid = o.paid || (o.credit_used || 0) + (o.promo_discount || 0) + (o.bonus_used || 0) + (o.manual_discount || 0) >= subtotal
         map[oi.menu_item_name].push({ customerName: o.customers?.name, customerPhone: o.customers?.phone, quantity: oi.quantity, options: oi.order_item_options, paid: o.paid, effectivePaid, transferClaimed: o.transfer_claimed, orderId: o.id })
       })
     })
@@ -568,7 +568,7 @@ function AdminPage() {
       o.order_items.forEach(oi => {
         if (!map[oi.menu_item_name]) map[oi.menu_item_name] = []
         const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-        const effectivePaid = o.paid || (o.credit_used || 0) + (o.promo_discount || 0) + (o.bonus_used || 0) >= subtotal
+        const effectivePaid = o.paid || (o.credit_used || 0) + (o.promo_discount || 0) + (o.bonus_used || 0) + (o.manual_discount || 0) >= subtotal
         map[oi.menu_item_name].push({ customerName: o.customers?.name, quantity: oi.quantity, options: oi.order_item_options, paid: o.paid, effectivePaid, transferClaimed: o.transfer_claimed, voided: o.voided })
       })
     })
@@ -825,7 +825,7 @@ function AdminPage() {
                 const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === customer.phone)
                 const unpaidTotal = unpaidOrders.reduce((sum, o) => {
                   const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-                  return sum + subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0)
+                  return sum + subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.credit_used || 0) - (o.manual_discount || 0)
                 }, 0)
                 const hasTransferClaim = unpaidOrders.some(o => o.transfer_claimed)
                 return (
