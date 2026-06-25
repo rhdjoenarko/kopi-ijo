@@ -383,19 +383,22 @@ function CustomerPage() {
       const { data: freshBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
       const remainingShots = freshBatch ? freshBatch.shot_stock - freshBatch.shot_used : 0
 
-      if (!freshBatch || !freshBatch.is_active || remainingShots < shotsNeeded) {
-        const newTarget = getOrderTarget(orderCutoff, closedDays)
-        setBatchWarning(`Maaf, stok untuk Order Langsung sudah habis atau sudah tutup. Ordermu otomatis masuk sebagai Pre-Order untuk ${formatOrderDate(newTarget)}.`)
-        actualBatchType = 'po'
-        deliveryDate = newTarget.toLocaleDateString('en-CA')
-        const { data: refreshedBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
-        if (refreshedBatch) setBatchSettings(refreshedBatch)
-      } else {
-        actualBatchType = 'batch2'
-        deliveryDate = today
-        await supabase.from('batch_settings').update({ shot_used: freshBatch.shot_used + shotsNeeded }).eq('id', freshBatch.id)
-        setBatchSettings({ ...freshBatch, shot_used: freshBatch.shot_used + shotsNeeded })
+      if (!freshBatch || !freshBatch.is_active) {
+        setError('Order Langsung sudah tutup. Silakan pilih Pre-Order.')
+        setLoading(false)
+        return
       }
+
+      if (remainingShots < shotsNeeded) {
+        setError(`Stok tersisa hanya ${remainingShots} shot, sedangkan order kamu butuh ${shotsNeeded} shot. Kurangi pesanan dulu ya.`)
+        setLoading(false)
+        return
+      }
+
+      actualBatchType = 'batch2'
+      deliveryDate = today
+      await supabase.from('batch_settings').update({ shot_used: freshBatch.shot_used + shotsNeeded }).eq('id', freshBatch.id)
+      setBatchSettings({ ...freshBatch, shot_used: freshBatch.shot_used + shotsNeeded })
     }
 
     const { finalTotal, totalDiscount } = getCartTotals()
@@ -447,11 +450,10 @@ function CustomerPage() {
     setLoading(false); setShowSuccessModal(true); setCart([])
     setTimeout(() => {
       setShowSuccessModal(false)
-      setBatchWarning('')
       setActiveTab('riwayat')
       fetchMyOrders()
       refreshCustomer()
-    }, batchWarning ? 2800 : 1500)
+    }, 1500)
   }
 
   function renderMenuList(items, mode) {
@@ -832,9 +834,7 @@ function CustomerPage() {
           <div style={{ background: '#ede8df', borderRadius: '16px', padding: '32px 24px', textAlign: 'center', maxWidth: '320px' }}>
             <div style={{ fontSize: '40px', marginBottom: '12px' }}>✓</div>
             <h3 style={{ color: '#1a3d2b', margin: '0 0 8px' }}>Order masuk!</h3>
-            <p style={{ color: '#5a5248', fontSize: '13px', margin: 0 }}>
-              {batchWarning ? batchWarning : 'Mengalihkan ke riwayat...'}
-            </p>
+            <p style={{ color: '#5a5248', fontSize: '13px', margin: 0 }}>Mengalihkan ke riwayat...</p>
           </div>
         </div>
       )}
@@ -847,6 +847,7 @@ function CustomerPage() {
               <span style={{ letterSpacing: '0.5px' }}>KONFIRMASI ORDER</span>
             </div>
             <div style={{ padding: '16px' }}>
+              {error && <p style={{ ...st.error, padding: '0 0 12px' }}>{error}</p>}
               <div style={cartMode === 'langsung' ? st.notifToday : (isNextDay ? st.notifNextDay : st.notifToday)}>
                 {cartMode === 'langsung'
                   ? <span>⚡ <strong>Order Langsung — delivery hari ini, {formatOrderDate(new Date())}</strong></span>
