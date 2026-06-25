@@ -55,40 +55,55 @@ function AnalyticsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterType])
 
-  const totalRevenuePaid = orders.filter(o => o.paid).reduce((sum, o) =>
-    sum + o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0), 0)
-
   const totalCups = orders.reduce((sum, o) =>
     sum + o.order_items.reduce((s, oi) => s + oi.quantity, 0), 0)
 
   const totalOrders = orders.length
 
   const totalOutstanding = orders
-    .filter(o => !o.paid)
+    .filter(o => !o.paid && !o.voided)
     .reduce((sum, o) => {
       const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
-      return sum + Math.max(0, subtotal - (o.credit_used || 0))
+      return sum + Math.max(0, subtotal - (o.promo_discount || 0) - (o.bonus_used || 0) - (o.manual_discount || 0) - (o.credit_used || 0))
+    }, 0)
+
+  const totalSubsidy = orders.reduce((sum, o) =>
+    sum + (o.bonus_used || 0) + (o.manual_discount || 0) + (o.promo_discount || 0), 0)
+
+  const totalSubsidyBonus = orders.reduce((sum, o) => sum + (o.bonus_used || 0), 0)
+  const totalSubsidyManual = orders.reduce((sum, o) => sum + (o.manual_discount || 0), 0)
+  const totalSubsidyPromo = orders.reduce((sum, o) => sum + (o.promo_discount || 0), 0)
+
+  const cashRevenue = orders
+    .filter(o => o.paid)
+    .reduce((sum, o) => {
+      const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
+      const nonCashPortion = (o.bonus_used || 0) + (o.manual_discount || 0) + (o.promo_discount || 0)
+      return sum + Math.max(0, subtotal - nonCashPortion)
     }, 0)
 
   const totalCreditBeredar = customers.reduce((sum, c) => sum + (c.credit_balance || 0), 0)
+  const totalBonusBeredar = customers.reduce((sum, c) => sum + (c.bonus_balance || 0), 0)
 
   const dailyMap = {}
   orders.forEach(o => {
     const date = groupBy === 'order'
       ? o.created_at.split('T')[0]
       : o.order_for_date || o.created_at.split('T')[0]
-    if (!dailyMap[date]) dailyMap[date] = { cups: 0, revenue: 0, credit: 0, cash: 0, unpaid: 0 }
+    if (!dailyMap[date]) dailyMap[date] = { cups: 0, revenue: 0, credit: 0, cash: 0, unpaid: 0, subsidy: 0 }
     const subtotal = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0)
     const creditUsed = o.credit_used || 0
-    const sisaTagihan = Math.max(0, subtotal - creditUsed)
+    const subsidy = (o.bonus_used || 0) + (o.manual_discount || 0) + (o.promo_discount || 0)
+    const sisaTagihan = Math.max(0, subtotal - subsidy - creditUsed)
     const effectivePaid = o.paid || sisaTagihan === 0
     o.order_items.forEach(oi => {
       dailyMap[date].cups += oi.quantity
       dailyMap[date].revenue += oi.price_at_order * oi.quantity
     })
     dailyMap[date].credit += creditUsed
+    dailyMap[date].subsidy += subsidy
     if (effectivePaid) {
-      dailyMap[date].cash += subtotal - creditUsed
+      dailyMap[date].cash += subtotal - creditUsed - subsidy
     } else {
       dailyMap[date].unpaid += sisaTagihan
     }
@@ -180,8 +195,8 @@ function AnalyticsPage() {
               <div style={st.metricValue}>{totalOrders}</div>
             </div>
             <div style={st.metricCard}>
-              <div style={st.metricLabel}>Revenue Diterima</div>
-              <div style={{ ...st.metricValue, color: '#1a3d2b', fontSize: '15px' }}>Rp {totalRevenuePaid.toLocaleString('id-ID')}</div>
+              <div style={st.metricLabel}>Revenue Cash Real</div>
+              <div style={{ ...st.metricValue, color: '#1a3d2b', fontSize: '15px' }}>Rp {cashRevenue.toLocaleString('id-ID')}</div>
             </div>
             <div style={st.metricCard}>
               <div style={st.metricLabel}>Outstanding Tagihan</div>
@@ -191,13 +206,46 @@ function AnalyticsPage() {
             </div>
           </div>
 
-          {totalCreditBeredar > 0 && (
-            <div style={{ background: '#fef3e2', border: '1px solid #e67e22', borderRadius: '10px', padding: '12px 14px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontSize: '12px', color: '#7d3c00', fontWeight: '500' }}>💳 Credit Belum Dipakai Customer</div>
-                <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>Ini "hutang" kamu ke customer</div>
+          {totalSubsidy > 0 && (
+            <div style={{ background: '#f3e8fb', border: '1px solid #9b59b6', borderRadius: '10px', padding: '12px 14px', marginBottom: '8px' }}>
+              <div style={{ fontSize: '12px', color: '#6c3483', fontWeight: '500', marginBottom: '8px' }}>💜 Total Subsidi Diberikan (bukan cash)</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6c3483', marginBottom: '4px' }}>
+                <span>Total</span>
+                <strong>Rp {totalSubsidy.toLocaleString('id-ID')}</strong>
               </div>
-              <strong style={{ color: '#e67e22', fontSize: '15px' }}>Rp {totalCreditBeredar.toLocaleString('id-ID')}</strong>
+              {totalSubsidyPromo > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#888' }}>
+                  <span>🏷 Promo</span><span>Rp {totalSubsidyPromo.toLocaleString('id-ID')}</span>
+                </div>
+              )}
+              {totalSubsidyBonus > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#888' }}>
+                  <span>🎁 Bonus</span><span>Rp {totalSubsidyBonus.toLocaleString('id-ID')}</span>
+                </div>
+              )}
+              {totalSubsidyManual > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#888' }}>
+                  <span>✂️ Potongan Manual</span><span>Rp {totalSubsidyManual.toLocaleString('id-ID')}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {(totalCreditBeredar > 0 || totalBonusBeredar > 0) && (
+            <div style={{ background: '#fef3e2', border: '1px solid #e67e22', borderRadius: '10px', padding: '12px 14px', marginBottom: '8px' }}>
+              <div style={{ fontSize: '12px', color: '#7d3c00', fontWeight: '500', marginBottom: '8px' }}>💳 Saldo Beredar (belum dipakai customer)</div>
+              {totalCreditBeredar > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#7d3c00' }}>
+                  <span>Credit (dari top-up customer)</span>
+                  <strong>Rp {totalCreditBeredar.toLocaleString('id-ID')}</strong>
+                </div>
+              )}
+              {totalBonusBeredar > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#7d3c00', marginTop: '4px' }}>
+                  <span>Bonus (subsidi belum terpakai)</span>
+                  <strong>Rp {totalBonusBeredar.toLocaleString('id-ID')}</strong>
+                </div>
+              )}
             </div>
           )}
 
@@ -240,6 +288,12 @@ function AnalyticsPage() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#2d7a4f' }}>
                           <span>↳ Credit</span>
                           <span>Rp {d.credit.toLocaleString('id-ID')}</span>
+                        </div>
+                      )}
+                      {d.subsidy > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#9b59b6' }}>
+                          <span>↳ Subsidi (Promo/Bonus/Manual)</span>
+                          <span>Rp {d.subsidy.toLocaleString('id-ID')}</span>
                         </div>
                       )}
                       {d.unpaid > 0 && (
