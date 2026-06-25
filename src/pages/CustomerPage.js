@@ -361,7 +361,7 @@ function CustomerPage() {
   const total = cartTotals.finalTotal
 
   async function handleOrder() {
-    setLoading(true); setError(''); setShowSummary(false)
+    setLoading(true); setError('')
 
     const wantsLangsung = cartMode === 'langsung'
     let actualBatchType = 'po'
@@ -447,6 +447,7 @@ function CustomerPage() {
       if (optionInserts.length > 0) await supabase.from('order_item_options').insert(optionInserts)
     }
 
+    setShowSummary(false)
     setLoading(false); setShowSuccessModal(true); setCart([])
     setTimeout(() => {
       setShowSuccessModal(false)
