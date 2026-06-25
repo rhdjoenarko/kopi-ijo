@@ -38,6 +38,9 @@ function AdminPage() {
   const [editingPa, setEditingPa] = useState(null)
   const [closedDays, setClosedDays] = useState([])
   const [closedDayForm, setClosedDayForm] = useState({ type: 'recurring', day_of_week: 1, specific_date: '', note: '' })
+  const [promos, setPromos] = useState([])
+  const [promoForm, setPromoForm] = useState({ name: '', type: 'overall', discount_type: 'percent', discount_amount: '', menu_item_id: '', start_date: '', end_date: '', stackable: false, priority: 0 })
+  const [editingPromo, setEditingPromo] = useState(null)
   const [adminMenuFull, setAdminMenuFull] = useState([])
   // dateGroups: [{ id, date, customerGroups: [{ id, customerId, isNew, newPhone, newName, items: [{ cartId, item, selectedOptions, quantity }] }] }]
   const [dateGroups, setDateGroups] = useState([])
@@ -132,6 +135,11 @@ function AdminPage() {
     if (data) setClosedDays(data)
   }, [])
 
+  const fetchPromos = useCallback(async () => {
+    const { data } = await supabase.from('promos').select('*, menu_items(name)').order('priority')
+    if (data) setPromos(data)
+  }, [])
+
   const fetchAdminMenuFull = useCallback(async () => {
     const { data } = await supabase
       .from('menu_items')
@@ -156,11 +164,12 @@ function AdminPage() {
       await fetchPaymentAccounts()
       await fetchClosedDays()
       await fetchAdminMenuFull()
+      await fetchPromos()
       await Promise.all([fetchMenu(), fetchOptionGroups(), fetchDailyTotals()])
       setLoading(false)
     }
     init()
-  }, [fetchWorkOrders, fetchAllUnpaid, fetchAllCustomers, fetchPaymentAccounts, fetchClosedDays, fetchAdminMenuFull, fetchMenu, fetchOptionGroups, fetchDailyTotals])
+  }, [fetchWorkOrders, fetchAllUnpaid, fetchAllCustomers, fetchPaymentAccounts, fetchClosedDays, fetchAdminMenuFull, fetchPromos, fetchMenu, fetchOptionGroups, fetchDailyTotals])
 
   async function handleTopUp(customerId, phone) {
     const amount = parseInt(topUpAmount[phone])
@@ -221,6 +230,66 @@ function AdminPage() {
     }
     await supabase.from('orders').update({ voided: true, voided_at: new Date().toISOString() }).eq('id', orderId)
     fetchAllUnpaid(); fetchAllCustomers(); fetchWorkOrders()
+  }
+
+  async function savePromo() {
+    if (!promoForm.name.trim() || !promoForm.discount_amount || !promoForm.start_date || !promoForm.end_date) {
+      setError('Lengkapi semua field promo.'); return
+    }
+    if (promoForm.type === 'product' && !promoForm.menu_item_id) {
+      setError('Pilih menu untuk promo produk.'); return
+    }
+    setError('')
+    const payload = {
+      name: promoForm.name.trim(),
+      type: promoForm.type,
+      discount_type: promoForm.discount_type,
+      discount_amount: parseFloat(promoForm.discount_amount),
+      menu_item_id: promoForm.type === 'product' ? promoForm.menu_item_id : null,
+      start_date: promoForm.start_date,
+      end_date: promoForm.end_date,
+      stackable: promoForm.stackable,
+      priority: parseInt(promoForm.priority) || 0,
+      active: true
+    }
+    if (editingPromo) {
+      await supabase.from('promos').update(payload).eq('id', editingPromo)
+    } else {
+      await supabase.from('promos').insert(payload)
+    }
+    setPromoForm({ name: '', type: 'overall', discount_type: 'percent', discount_amount: '', menu_item_id: '', start_date: '', end_date: '', stackable: false, priority: 0 })
+    setEditingPromo(null)
+    fetchPromos()
+  }
+
+  function startEditPromo(p) {
+    setEditingPromo(p.id)
+    setPromoForm({
+      name: p.name, type: p.type, discount_type: p.discount_type, discount_amount: p.discount_amount,
+      menu_item_id: p.menu_item_id || '', start_date: p.start_date, end_date: p.end_date,
+      stackable: p.stackable, priority: p.priority
+    })
+  }
+
+  async function deletePromo(id) {
+    if (!window.confirm('Hapus promo ini?')) return
+    await supabase.from('promos').delete().eq('id', id)
+    fetchPromos()
+  }
+
+  async function movePromoPriority(id, direction) {
+    const idx = promos.findIndex(p => p.id === id)
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (swapIdx < 0 || swapIdx >= promos.length) return
+    const a = promos[idx], b = promos[swapIdx]
+    await supabase.from('promos').update({ priority: b.priority }).eq('id', a.id)
+    await supabase.from('promos').update({ priority: a.priority }).eq('id', b.id)
+    fetchPromos()
+  }
+
+  async function togglePromoActive(id, current) {
+    await supabase.from('promos').update({ active: !current }).eq('id', id)
+    fetchPromos()
   }
 
   function addDateGroup() {
@@ -561,10 +630,10 @@ function AdminPage() {
         {loading && <p style={{ color: '#5a5248', padding: '8px 16px', fontSize: '13px' }}>Memuat...</p>}
 
         <div style={st.tabs}>
-          {['workorder', 'history', 'billing', 'inputorder', 'menu', 'options', 'payment', 'jadwal', 'settings'].map(t => (
+          {['workorder', 'history', 'billing', 'inputorder', 'menu', 'options', 'promo', 'payment', 'jadwal', 'settings'].map(t => (
             <button key={t} style={{ ...st.tab, ...(tab === t ? st.tabActive : {}) }}
               onClick={() => { setTab(t); if (t === 'history') fetchHistoryOrders(historyDate, historyFilter) }}>
-              {{ workorder: '📋 Work Order', history: '📅 History', billing: '💰 Tagihan', inputorder: '➕ Input Order', menu: '☕ Menu', options: '🎛 Opsi', payment: '🏦 Rekening', jadwal: '🗓 Jadwal', settings: '⚙️ Setting' }[t]}
+              {{ workorder: '📋 Work Order', history: '📅 History', billing: '💰 Tagihan', inputorder: '➕ Input Order', menu: '☕ Menu', options: '🎛 Opsi', promo: '🏷 Promo', payment: '🏦 Rekening', jadwal: '🗓 Jadwal', settings: '⚙️ Setting' }[t]}
             </button>
           ))}
         </div>
@@ -1100,6 +1169,113 @@ function AdminPage() {
                   Buat Semua Order
                 </button>
               )}
+            </div>
+          )}
+
+          {tab === 'promo' && (
+            <div>
+              <div style={st.sectionBox}>
+                <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>{editingPromo ? 'Edit Promo' : 'Tambah Promo'}</h3>
+                <input style={st.input} placeholder="Nama promo" value={promoForm.name}
+                  onChange={e => setPromoForm(f => ({ ...f, name: e.target.value }))} />
+
+                <label style={st.label}>Jenis Promo:</label>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                  {[['overall', 'Overall Transaksi'], ['product', 'Per Produk']].map(([v, label]) => (
+                    <label key={v} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '13px', cursor: 'pointer' }}>
+                      <input type="radio" name="promoType" value={v} checked={promoForm.type === v}
+                        onChange={() => setPromoForm(f => ({ ...f, type: v }))} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+
+                {promoForm.type === 'product' && (
+                  <select style={st.input} value={promoForm.menu_item_id}
+                    onChange={e => setPromoForm(f => ({ ...f, menu_item_id: e.target.value }))}>
+                    <option value="">-- Pilih Menu --</option>
+                    {menuItems.map(item => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))}
+                  </select>
+                )}
+
+                <label style={st.label}>Tipe Diskon:</label>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                  {[['percent', 'Persen (%)'], ['value', 'Nominal (Rp)']].map(([v, label]) => (
+                    <label key={v} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '13px', cursor: 'pointer' }}>
+                      <input type="radio" name="discountType" value={v} checked={promoForm.discount_type === v}
+                        onChange={() => setPromoForm(f => ({ ...f, discount_type: v }))} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+
+                <input style={st.input} type="number" placeholder={promoForm.discount_type === 'percent' ? 'Persen diskon (misal: 20)' : 'Nominal diskon (Rp)'}
+                  value={promoForm.discount_amount} onChange={e => setPromoForm(f => ({ ...f, discount_amount: e.target.value }))} />
+
+                <label style={st.label}>Periode Promo:</label>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                  <input style={{ ...st.input, marginBottom: 0, flex: 1 }} type="date" value={promoForm.start_date}
+                    onChange={e => setPromoForm(f => ({ ...f, start_date: e.target.value }))} />
+                  <input style={{ ...st.input, marginBottom: 0, flex: 1 }} type="date" value={promoForm.end_date}
+                    onChange={e => setPromoForm(f => ({ ...f, end_date: e.target.value }))} />
+                </div>
+
+                <label style={{ ...st.checkRow, marginTop: '8px' }}>
+                  <input type="checkbox" checked={promoForm.stackable}
+                    onChange={e => setPromoForm(f => ({ ...f, stackable: e.target.checked }))} />
+                  Bisa digabung dengan promo lain (stackable)
+                </label>
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <button style={st.btn} onClick={savePromo}>{editingPromo ? 'Update' : 'Simpan'}</button>
+                  {editingPromo && (
+                    <button style={st.btnOutline} onClick={() => {
+                      setPromoForm({ name: '', type: 'overall', discount_type: 'percent', discount_amount: '', menu_item_id: '', start_date: '', end_date: '', stackable: false, priority: 0 })
+                      setEditingPromo(null)
+                    }}>Batal</button>
+                  )}
+                </div>
+              </div>
+
+              <h3 style={{ color: '#1a3d2b', margin: '20px 0 12px' }}>Daftar Promo</h3>
+              <p style={{ fontSize: '12px', color: '#888', marginTop: '-8px', marginBottom: '12px' }}>
+                Urutan = prioritas. Promo di atas dipakai duluan kalau tidak stackable dengan promo lain.
+              </p>
+              {promos.length === 0 && <p style={{ color: '#5a5248' }}>Belum ada promo.</p>}
+              {promos.map((p, idx) => {
+                const today = new Date().toLocaleDateString('en-CA')
+                const isLive = p.active && today >= p.start_date && today <= p.end_date
+                return (
+                  <div key={p.id} style={{ ...st.itemCard, opacity: p.active ? 1 : 0.5, border: isLive ? '1.5px solid #2d7a4f' : '0.5px solid #d6cfc4' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                      <div>
+                        <strong style={{ color: '#2c2c2a' }}>{p.name}</strong>
+                        {isLive && <span style={{ ...st.tag, marginLeft: '6px', background: '#d4e8d8', color: '#1a3d2b' }}>🟢 Live</span>}
+                        <div style={{ fontSize: '12px', color: '#5a5248', marginTop: '3px' }}>
+                          {p.type === 'overall' ? 'Overall' : `Produk: ${p.menu_items?.name || '-'}`}
+                          {' · '}
+                          {p.discount_type === 'percent' ? `${p.discount_amount}%` : `Rp ${p.discount_amount.toLocaleString('id-ID')}`}
+                          {p.stackable ? ' · Stackable' : ' · Tidak stackable'}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>
+                          {new Date(p.start_date + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} - {new Date(p.end_date + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        <button style={st.btnSmall} onClick={() => movePromoPriority(p.id, 'up')} disabled={idx === 0}>↑</button>
+                        <button style={st.btnSmall} onClick={() => movePromoPriority(p.id, 'down')} disabled={idx === promos.length - 1}>↓</button>
+                        <button style={{ ...st.btnSmall, background: p.active ? '#e67e22' : '#2d7a4f' }} onClick={() => togglePromoActive(p.id, p.active)}>
+                          {p.active ? 'Nonaktifkan' : 'Aktifkan'}
+                        </button>
+                        <button style={st.btnSmall} onClick={() => startEditPromo(p)}>Edit</button>
+                        <button style={{ ...st.btnSmall, background: '#c0392b' }} onClick={() => deletePromo(p.id)}>Hapus</button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
 
