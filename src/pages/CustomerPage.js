@@ -76,6 +76,7 @@ function CustomerPage() {
   const [orderCutoff, setOrderCutoff] = useState(7)
   const [paymentAccounts, setPaymentAccounts] = useState([])
   const [closedDays, setClosedDays] = useState([]) // eslint-disable-line no-unused-vars
+  const [activePromos, setActivePromos] = useState([])
   const [orderTarget, setOrderTarget] = useState(getOrderTarget(7))
   const [isNextDay, setIsNextDay] = useState(false)
   const [todayIndex, setTodayIndex] = useState(getOrderTarget(7).getDay())
@@ -85,14 +86,18 @@ function CustomerPage() {
 
   useEffect(() => {
     async function loadSettings() {
-      const [{ data: settingsData }, { data: paData }, { data: cdData }] = await Promise.all([
+      const [{ data: settingsData }, { data: paData }, { data: cdData }, { data: promoData }] = await Promise.all([
         supabase.from('settings').select('*'),
         supabase.from('payment_accounts').select('*').eq('active', true).order('sort_order'),
-        supabase.from('closed_days').select('*')
+        supabase.from('closed_days').select('*'),
+        supabase.from('promos').select('*').eq('active', true).order('priority')
       ])
       if (paData) setPaymentAccounts(paData)
       const cds = cdData || []
       setClosedDays(cds)
+      const today = new Date().toLocaleDateString('en-CA')
+      const livePromos = (promoData || []).filter(p => today >= p.start_date && today <= p.end_date)
+      setActivePromos(livePromos)
       if (settingsData) {
         const map = {}
         settingsData.forEach(d => { map[d.key] = parseInt(d.value) })
@@ -237,14 +242,73 @@ function CustomerPage() {
     return merged
   }
 
-  const total = cart.reduce((sum, c) => sum + getItemPrice(c), 0)
+  function getActiveOverallPromos() {
+    const overall = activePromos.filter(p => p.type === 'overall')
+    if (overall.length === 0) return []
+    const stackable = overall.filter(p => p.stackable)
+    const nonStackable = overall.filter(p => !p.stackable)
+    const result = [...stackable]
+    if (nonStackable.length > 0) result.push(nonStackable[0])
+    return result
+  }
+
+  function getActiveProductPromo(menuItemId) {
+    const productPromos = activePromos.filter(p => p.type === 'product' && p.menu_item_id === menuItemId)
+    if (productPromos.length === 0) return null
+    const stackable = productPromos.filter(p => p.stackable)
+    const nonStackable = productPromos.filter(p => !p.stackable)
+    if (stackable.length > 0) return stackable
+    if (nonStackable.length > 0) return [nonStackable[0]]
+    return null
+  }
+
+  function getItemPriceWithPromo(cartItem) {
+    const optionsTotal = Object.values(cartItem.selectedOptions).reduce((sum, choice) => sum + (choice?.price_addition || 0), 0)
+    const basePrice = cartItem.item.price + optionsTotal
+    let unitPrice = basePrice
+    const productPromos = getActiveProductPromo(cartItem.item.id)
+    if (productPromos) {
+      productPromos.forEach(p => {
+        if (p.discount_type === 'percent') unitPrice -= unitPrice * (p.discount_amount / 100)
+        else unitPrice -= p.discount_amount
+      })
+      unitPrice = Math.max(0, unitPrice)
+    }
+    return { original: basePrice * cartItem.quantity, discounted: unitPrice * cartItem.quantity }
+  }
+
+  function getCartTotals() {
+    let subtotalOriginal = 0
+    let subtotalAfterProductPromo = 0
+    cart.forEach(c => {
+      const { original, discounted } = getItemPriceWithPromo(c)
+      subtotalOriginal += original
+      subtotalAfterProductPromo += discounted
+    })
+    let finalTotal = subtotalAfterProductPromo
+    const overallPromos = getActiveOverallPromos()
+    overallPromos.forEach(p => {
+      if (p.discount_type === 'percent') finalTotal -= finalTotal * (p.discount_amount / 100)
+      else finalTotal -= p.discount_amount
+    })
+    finalTotal = Math.max(0, finalTotal)
+    return {
+      subtotalOriginal,
+      subtotalAfterProductPromo,
+      finalTotal,
+      productDiscount: subtotalOriginal - subtotalAfterProductPromo,
+      overallDiscount: subtotalAfterProductPromo - finalTotal,
+      totalDiscount: subtotalOriginal - finalTotal
+    }
+  }
+
+  const cartTotals = getCartTotals()
+  const total = cartTotals.finalTotal
 
   async function handleOrder() {
     setLoading(true); setError(''); setShowSummary(false)
-    const orderTotal = cart.reduce((sum, cartItem) => {
-      const itemPrice = cartItem.item.price + Object.values(cartItem.selectedOptions).reduce((s, c) => s + (c?.price_addition || 0), 0)
-      return sum + itemPrice * cartItem.quantity
-    }, 0)
+    const { finalTotal, totalDiscount } = getCartTotals()
+    const orderTotal = finalTotal
     const { data: customerData } = await supabase.from('customers').select('credit_balance').eq('id', customer.id).single()
     const availableCredit = customerData?.credit_balance || 0
     const creditUsed = Math.min(availableCredit, orderTotal)
@@ -256,6 +320,7 @@ function CustomerPage() {
       customer_id: customer.id,
       order_for_date: orderTarget.toLocaleDateString('en-CA'),
       credit_used: creditUsed,
+      promo_discount: totalDiscount,
       voided: false,
       paid: isPaid,
       paid_at: isPaid ? new Date().toISOString() : null
@@ -331,6 +396,16 @@ function CustomerPage() {
               }
             </div>
 
+            {activePromos.length > 0 && (
+              <div style={{ background: '#fef3e2', borderBottom: '2px solid #e67e22', padding: '10px 16px' }}>
+                {activePromos.map(p => (
+                  <div key={p.id} style={{ fontSize: '13px', color: '#7d3c00', marginBottom: '2px' }}>
+                    🏷 <strong>{p.name}</strong> — {p.discount_type === 'percent' ? `${p.discount_amount}% off` : `potongan Rp ${p.discount_amount.toLocaleString('id-ID')}`}
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div style={st.tabs}>
               <button style={{ ...st.tab, ...(activeTab === 'menu' ? st.tabActive : {}) }} onClick={() => setActiveTab('menu')}>☕ Menu</button>
               <button style={{ ...st.tab, ...(activeTab === 'riwayat' ? st.tabActive : {}) }} onClick={() => { setActiveTab('riwayat'); fetchMyOrders() }}>📋 Riwayat & Tagihan</button>
@@ -341,6 +416,15 @@ function CustomerPage() {
                 {menuItems.length === 0 && <p style={{ color: '#5a5248' }}>Tidak ada menu tersedia untuk {formatOrderDate(orderTarget)}.</p>}
                 {menuItems.map(item => {
                   const isSoldOut = item.daily_limit !== null && item.soldToday >= item.daily_limit
+                  const itemPromos = getActiveProductPromo(item.id)
+                  let promoPrice = item.price
+                  if (itemPromos) {
+                    itemPromos.forEach(p => {
+                      if (p.discount_type === 'percent') promoPrice -= promoPrice * (p.discount_amount / 100)
+                      else promoPrice -= p.discount_amount
+                    })
+                    promoPrice = Math.max(0, promoPrice)
+                  }
                   return (
                     <div key={item.id} style={{ ...st.menuItem, opacity: isSoldOut ? 0.5 : 1, padding: 0, overflow: 'hidden' }}>
                       {item.image_url && (
@@ -360,7 +444,14 @@ function CustomerPage() {
                         <div>
                           <strong style={{ color: '#2c2c2a' }}>{item.name}</strong>
                           <div style={{ fontSize: '12px', color: '#1a3d2b', marginTop: '2px' }}>
-                            Rp {item.price.toLocaleString('id-ID')}
+                            {itemPromos ? (
+                              <>
+                                <span style={{ textDecoration: 'line-through', color: '#888', marginRight: '6px' }}>Rp {item.price.toLocaleString('id-ID')}</span>
+                                <span style={{ color: '#c0392b', fontWeight: 'bold' }}>Rp {promoPrice.toLocaleString('id-ID')}</span>
+                              </>
+                            ) : (
+                              <span>Rp {item.price.toLocaleString('id-ID')}</span>
+                            )}
                             {!item.image_url && isSoldOut && <span style={{ color: '#c0392b', marginLeft: '6px' }}>· Habis</span>}
                             {!item.image_url && item.daily_limit && !isSoldOut && <span style={{ color: '#888', marginLeft: '6px' }}>· Sisa {item.daily_limit - item.soldToday}</span>}
                           </div>
@@ -426,6 +517,16 @@ function CustomerPage() {
                           </div>
                         </div>
                       ))}
+                      {cartTotals.totalDiscount > 0 && (
+                        <div style={{ marginTop: '4px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#5a5248' }}>
+                            <span>Subtotal</span><span>Rp {cartTotals.subtotalOriginal.toLocaleString('id-ID')}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#c0392b' }}>
+                            <span>Diskon Promo</span><span>- Rp {cartTotals.totalDiscount.toLocaleString('id-ID')}</span>
+                          </div>
+                        </div>
+                      )}
                       <div style={st.totalRow}>
                         <strong>Total</strong>
                         <strong style={{ color: '#1a3d2b' }}>Rp {total.toLocaleString('id-ID')}</strong>
