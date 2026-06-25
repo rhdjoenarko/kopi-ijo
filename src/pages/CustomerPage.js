@@ -368,7 +368,7 @@ function CustomerPage() {
         setBatchWarning(`Maaf, stok untuk Order Langsung sudah habis atau sudah tutup. Ordermu otomatis masuk sebagai Pre-Order untuk ${formatOrderDate(newTarget)}.`)
         setSelectedBatch('po')
         actualBatchType = 'po'
-        deliveryDate = getOrderTarget(orderCutoff, closedDays).toLocaleDateString('en-CA')
+        deliveryDate = newTarget.toLocaleDateString('en-CA')
       } else {
         actualBatchType = 'batch2'
         deliveryDate = today
@@ -421,6 +421,10 @@ function CustomerPage() {
         }))
       if (optionInserts.length > 0) await supabase.from('order_item_options').insert(optionInserts)
     }
+    const today = new Date().toLocaleDateString('en-CA')
+    const { data: refreshedBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
+    if (refreshedBatch) setBatchSettings(refreshedBatch)
+
     setLoading(false); setShowSuccessModal(true); setCart([])
     setTimeout(() => {
       setShowSuccessModal(false)
