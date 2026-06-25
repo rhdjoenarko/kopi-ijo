@@ -59,6 +59,19 @@ function formatOrderFor(orderForDate, createdAt, cutoffHour) {
   return formatOrderDate(target)
 }
 
+function isBatch2Open(batchSettings) {
+  if (!batchSettings || !batchSettings.is_active) return false
+  const now = new Date()
+  const today = now.toLocaleDateString('en-CA')
+  if (batchSettings.batch_date !== today) return false
+  const openMinutes = batchSettings.open_hour * 60 + batchSettings.open_minute
+  const closeMinutes = batchSettings.close_hour * 60 + batchSettings.close_minute
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  if (nowMinutes < openMinutes || nowMinutes >= closeMinutes) return false
+  if (batchSettings.shot_stock - batchSettings.shot_used <= 0) return false
+  return true
+}
+
 function CustomerPage() {
   const [phone, setPhone] = useState('')
   const [name, setName] = useState('')
@@ -77,6 +90,9 @@ function CustomerPage() {
   const [paymentAccounts, setPaymentAccounts] = useState([])
   const [closedDays, setClosedDays] = useState([]) // eslint-disable-line no-unused-vars
   const [activePromos, setActivePromos] = useState([])
+  const [batchSettings, setBatchSettings] = useState(null)
+  const [selectedBatch, setSelectedBatch] = useState('po')
+  const [batchWarning, setBatchWarning] = useState('')
   const [orderTarget, setOrderTarget] = useState(getOrderTarget(7))
   const [isNextDay, setIsNextDay] = useState(false)
   const [todayIndex, setTodayIndex] = useState(getOrderTarget(7).getDay())
@@ -86,16 +102,18 @@ function CustomerPage() {
 
   useEffect(() => {
     async function loadSettings() {
-      const [{ data: settingsData }, { data: paData }, { data: cdData }, { data: promoData }] = await Promise.all([
+      const today = new Date().toLocaleDateString('en-CA')
+      const [{ data: settingsData }, { data: paData }, { data: cdData }, { data: promoData }, { data: batchData }] = await Promise.all([
         supabase.from('settings').select('*'),
         supabase.from('payment_accounts').select('*').eq('active', true).order('sort_order'),
         supabase.from('closed_days').select('*'),
-        supabase.from('promos').select('*').eq('active', true).order('priority')
+        supabase.from('promos').select('*').eq('active', true).order('priority'),
+        supabase.from('batch_settings').select('*').eq('batch_date', today).single()
       ])
+      if (batchData) setBatchSettings(batchData)
       if (paData) setPaymentAccounts(paData)
       const cds = cdData || []
       setClosedDays(cds)
-      const today = new Date().toLocaleDateString('en-CA')
       const livePromos = (promoData || []).filter(p => today >= p.start_date && today <= p.end_date)
       setActivePromos(livePromos)
       if (settingsData) {
@@ -116,7 +134,7 @@ function CustomerPage() {
   useEffect(() => {
     if (step === 'menu') { fetchMenu(); fetchMyOrders() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step])
+  }, [step, selectedBatch])
 
   useEffect(() => {
     function handleScroll() {
@@ -131,12 +149,19 @@ function CustomerPage() {
   }, [cart])
 
   async function fetchMenu() {
-    const { data, error } = await supabase
+    let query = supabase
       .from('menu_items')
       .select(`*, menu_item_option_groups(option_group_id, option_groups(id, name, required, option_choices(id, label, sort_order, price_addition)))`)
       .eq('active', true)
-      .contains('available_days', [todayIndex])
       .order('sort_order', { ascending: true })
+
+    if (selectedBatch === 'batch2') {
+      query = query.eq('batch2_eligible', true)
+    } else {
+      query = query.contains('available_days', [todayIndex])
+    }
+
+    const { data, error } = await query
     if (error) { setError('Gagal load menu.'); return }
     const { data: totals } = await supabase.from('daily_item_totals').select('*')
     const totalsMap = {}
@@ -307,6 +332,41 @@ function CustomerPage() {
 
   async function handleOrder() {
     setLoading(true); setError(''); setShowSummary(false)
+
+    const isBatch2Order = selectedBatch === 'batch2' && isBatch2Open(batchSettings)
+    let actualBatchType = 'po'
+    let deliveryDate = orderTarget.toLocaleDateString('en-CA')
+
+    if (isBatch2Order) {
+      // Hitung total shot yang dibutuhkan
+      let shotsNeeded = 0
+      cart.forEach(c => {
+        shotsNeeded += (c.item.shots_per_item || 1) * c.quantity
+        Object.values(c.selectedOptions).forEach(choice => {
+          if (choice?.label?.toLowerCase().includes('extra shot')) {
+            const match = choice.label.match(/(\d+)/)
+            if (match) shotsNeeded += parseInt(match[1]) * c.quantity
+          }
+        })
+      })
+
+      // Re-fetch batch settings untuk data terbaru (hindari race condition)
+      const today = new Date().toLocaleDateString('en-CA')
+      const { data: freshBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
+      const remainingShots = freshBatch ? freshBatch.shot_stock - freshBatch.shot_used : 0
+
+      if (!freshBatch || !freshBatch.is_active || remainingShots < shotsNeeded) {
+        setBatchWarning('Stok shot Batch 2 sudah habis atau sudah tutup. Ordermu akan masuk untuk BESOK (Batch PO) ya!')
+        setSelectedBatch('po')
+        actualBatchType = 'po'
+        deliveryDate = getOrderTarget(orderCutoff, closedDays).toLocaleDateString('en-CA')
+      } else {
+        actualBatchType = 'batch2'
+        deliveryDate = today
+        await supabase.from('batch_settings').update({ shot_used: freshBatch.shot_used + shotsNeeded }).eq('id', freshBatch.id)
+      }
+    }
+
     const { finalTotal, totalDiscount } = getCartTotals()
     const orderTotal = finalTotal
     const { data: customerData } = await supabase.from('customers').select('credit_balance, bonus_balance').eq('id', customer.id).single()
@@ -326,10 +386,11 @@ function CustomerPage() {
     const isPaid = (bonusUsed + creditUsed) >= orderTotal
     const { data: order, error: orderError } = await supabase.from('orders').insert({
       customer_id: customer.id,
-      order_for_date: orderTarget.toLocaleDateString('en-CA'),
+      order_for_date: deliveryDate,
       credit_used: creditUsed,
       bonus_used: bonusUsed,
       promo_discount: totalDiscount,
+      batch_type: actualBatchType,
       voided: false,
       paid: isPaid,
       paid_at: isPaid ? new Date().toISOString() : null
@@ -412,6 +473,35 @@ function CustomerPage() {
                     🏷 <strong>{p.name}</strong> — {p.discount_type === 'percent' ? `${p.discount_amount}% off` : `potongan Rp ${p.discount_amount.toLocaleString('id-ID')}`}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {isBatch2Open(batchSettings) && (
+              <div style={{ background: '#e8f0fe', borderBottom: '2px solid #1a3d2b', padding: '12px 16px' }}>
+                <div style={{ fontSize: '13px', color: '#1a3d2b', fontWeight: '500', marginBottom: '8px' }}>
+                  ⚡ Batch 2 sedang buka! Mau order untuk sekarang atau besok?
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button style={{ ...st.tab, flex: 1, ...(selectedBatch === 'batch2' ? st.tabActive : {}) }}
+                    onClick={() => { setSelectedBatch('batch2'); setBatchWarning('') }}>
+                    ⚡ Sekarang (Batch 2)
+                  </button>
+                  <button style={{ ...st.tab, flex: 1, ...(selectedBatch === 'po' ? st.tabActive : {}) }}
+                    onClick={() => { setSelectedBatch('po'); setBatchWarning('') }}>
+                    📅 Besok (PO)
+                  </button>
+                </div>
+                {selectedBatch === 'batch2' && (
+                  <div style={{ fontSize: '11px', color: '#5a5248', marginTop: '6px' }}>
+                    Sisa stok shot: {batchSettings.shot_stock - batchSettings.shot_used}. Hanya menu tertentu yang tersedia.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {batchWarning && (
+              <div style={{ background: '#fef3e2', border: '2px solid #e67e22', borderRadius: '8px', padding: '10px 16px', margin: '8px 16px', fontSize: '13px', color: '#7d3c00' }}>
+                ⚠️ {batchWarning}
               </div>
             )}
 
