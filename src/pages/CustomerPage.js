@@ -90,10 +90,10 @@ function CustomerPage() {
   const [expandedOrder, setExpandedOrder] = useState(null)
   const [orderCutoff, setOrderCutoff] = useState(7)
   const [paymentAccounts, setPaymentAccounts] = useState([])
-  const [closedDays, setClosedDays] = useState([])
+  const [closedDays, setClosedDays] = useState([]) // eslint-disable-line no-unused-vars
   const [activePromos, setActivePromos] = useState([])
   const [batchSettings, setBatchSettings] = useState(null)
-  const [batchWarning, setBatchWarning] = useState('')
+  const [batchWarning] = useState('') // eslint-disable-line no-unused-vars
   const [orderTarget, setOrderTarget] = useState(getOrderTarget(7))
   const [isNextDay, setIsNextDay] = useState(false)
   const [todayIndex, setTodayIndex] = useState(getOrderTarget(7).getDay())
