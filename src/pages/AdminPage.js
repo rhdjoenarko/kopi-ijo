@@ -179,7 +179,7 @@ function AdminPage() {
     await supabase.from('customer_credits').insert({ customer_id: customerId, amount, note: topUpNote[phone] || '' })
     const unpaidOrders = allUnpaidOrders.filter(o => o.customers?.phone === phone)
     for (const o of unpaidOrders) {
-      const orderBill = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.credit_used || 0)
+      const orderBill = o.order_items.reduce((s, oi) => s + oi.price_at_order * oi.quantity, 0) - (o.promo_discount || 0) - (o.credit_used || 0)
       if (orderBill <= 0) { await supabase.from('orders').update({ paid: true, paid_at: new Date().toISOString() }).eq('id', o.id); continue }
       if (remainingCredit >= orderBill) {
         remainingCredit -= orderBill
