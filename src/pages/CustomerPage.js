@@ -78,6 +78,7 @@ function CustomerPage() {
   const [customer, setCustomer] = useState(null)
   const [step, setStep] = useState('phone')
   const [activeTab, setActiveTab] = useState('po')
+  const [tabDefaultSet, setTabDefaultSet] = useState(false)
   const [menuItemsPo, setMenuItemsPo] = useState([])
   const [menuItemsLangsung, setMenuItemsLangsung] = useState([])
   const [cart, setCart] = useState([])
@@ -141,10 +142,17 @@ function CustomerPage() {
 
   // If "Order Langsung" tab is active but it just closed, bounce back to Pre-Order tab
   useEffect(() => {
-    if (activeTab === 'langsung' && !langsungOpen) {
+    if (!tabDefaultSet && batchSettings !== null) {
+      setActiveTab(langsungOpen ? 'langsung' : 'po')
+      setTabDefaultSet(true)
+    }
+  }, [batchSettings, langsungOpen, tabDefaultSet])
+
+  useEffect(() => {
+    if (activeTab === 'langsung' && !langsungOpen && tabDefaultSet) {
       setActiveTab('po')
     }
-  }, [activeTab, langsungOpen])
+  }, [activeTab, langsungOpen, tabDefaultSet])
 
   useEffect(() => {
     function handleScroll() {
