@@ -977,7 +977,13 @@ function AdminPage() {
                             return (
                               <div key={o.id} style={{ marginBottom: '12px', background: '#fff', borderRadius: '8px', padding: '10px', border: `1.5px solid ${statusColor}` }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                                  <span style={{ fontSize: '12px', color: '#888' }}>{formatTimestamp(o.created_at)}</span>
+                                  <div>
+                                    <div style={{ fontSize: '12px', color: '#888' }}>Pesan: {formatTimestamp(o.created_at)}</div>
+                                    <div style={{ fontSize: '12px', color: '#1a3d2b', fontWeight: '500' }}>
+                                      Delivery: {o.order_for_date ? new Date(o.order_for_date + 'T00:00:00').toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+                                      {o.batch_type === 'batch2' && <span style={{ color: '#e67e22', marginLeft: '6px' }}>⚡ Langsung</span>}
+                                    </div>
+                                  </div>
                                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                                     <span style={{ background: statusBg, color: statusColor, padding: '3px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: '500' }}>{statusLabel}</span>
                                     <button style={{ ...st.btnSmall, background: '#c0392b', padding: '3px 8px', fontSize: '11px' }} onClick={() => voidOrder(o.id)}>Void</button>
