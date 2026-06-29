@@ -51,6 +51,8 @@ function AdminPage() {
   const [dateGroups, setDateGroups] = useState([])
   const [workDateLabel, setWorkDateLabel] = useState('')
   const [workOrderView, setWorkOrderView] = useState('po') // 'po' or 'langsung'
+  const [workOrderView, setWorkOrderView] = useState('po') // 'po' or 'langsung'
+  const [workViewDefaultSet, setWorkViewDefaultSet] = useState(false)
   const [langsungOrders, setLangsungOrders] = useState([])
   const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '', batch2_eligible: false })
   const [menuFormGroups, setMenuFormGroups] = useState([])
@@ -167,6 +169,14 @@ function AdminPage() {
       setBatchSettings(null)
     }
   }, [])
+
+  useEffect(() => {
+    if (!workViewDefaultSet && batchSettings !== null) {
+      const isOpen = batchSettings.is_active && (batchSettings.shot_stock - batchSettings.shot_used) > 0
+      setWorkOrderView(isOpen ? 'langsung' : 'po')
+      setWorkViewDefaultSet(true)
+    }
+  }, [batchSettings, workViewDefaultSet])
 
   const fetchPromos = useCallback(async () => {
     const { data } = await supabase.from('promos').select('*, menu_items(name)').order('priority')
@@ -774,7 +784,7 @@ function AdminPage() {
           {['workorder', 'history', 'billing', 'inputorder', 'menu', 'options', 'promo', 'payment', 'jadwal', 'batch2', 'settings'].map(t => (
             <button key={t} style={{ ...st.tab, ...(tab === t ? st.tabActive : {}) }}
               onClick={() => { setTab(t); if (t === 'history') fetchHistoryOrders(historyDate, historyFilter) }}>
-              {{ workorder: '📋 Work Order', history: '📅 History', billing: '💰 Tagihan', inputorder: '➕ Input Order', menu: '☕ Menu', options: '🎛 Opsi', promo: '🏷 Promo', payment: '🏦 Rekening', jadwal: '🗓 Jadwal', batch2: '⚡ Batch 2', settings: '⚙️ Setting' }[t]}
+              {{ workorder: '📋 Work Order', history: '📅 History', billing: '💰 Tagihan', inputorder: '➕ Input Order', menu: '☕ Menu', options: '🎛 Opsi', promo: '🏷 Promo', payment: '🏦 Rekening', jadwal: '🗓 Jadwal', batch2: '⚡ Order Langsung', settings: '⚙️ Setting' }[t]}
             </button>
           ))}
         </div>
@@ -1113,7 +1123,7 @@ function AdminPage() {
                 {optionGroups.length === 0 && <p style={{ fontSize: '13px', color: '#888' }}>Belum ada grup opsi.</p>}
                 <label style={{ ...st.checkRow, marginTop: '4px' }}>
                   <input type="checkbox" checked={menuForm.batch2_eligible || false} onChange={e => setMenuForm(f => ({ ...f, batch2_eligible: e.target.checked }))} />
-                  {' '}☕ Tersedia di Batch 2 (live di kantor)
+                  {' '}⚡ Tersedia di Order Langsung
                 </label>
                 <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                   <button style={st.btn} onClick={saveMenu}>{editingMenu ? 'Update Menu' : 'Simpan Menu'}</button>
@@ -1490,7 +1500,7 @@ function AdminPage() {
           {tab === 'batch2' && (
             <div>
               <div style={st.sectionBox}>
-                <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Setting Batch 2 Hari Ini</h3>
+                <h3 style={{ color: '#1a3d2b', marginBottom: '12px' }}>Setting Order Langsung Hari Ini</h3>
                 <p style={{ fontSize: '12px', color: '#888', marginTop: '-6px', marginBottom: '12px' }}>
                   Setting ini berlaku untuk hari ini saja. Reset setiap hari.
                 </p>
@@ -1498,7 +1508,7 @@ function AdminPage() {
                 <label style={{ ...st.checkRow, fontSize: '15px', fontWeight: '500' }}>
                   <input type="checkbox" checked={batchForm.is_active}
                     onChange={e => setBatchForm(f => ({ ...f, is_active: e.target.checked }))} />
-                  🟢 Batch 2 Aktif Hari Ini
+                  🟢 Order Langsung Aktif Hari Ini
                 </label>
 
                 <label style={st.label}>Jam Buka:</label>
@@ -1544,9 +1554,9 @@ function AdminPage() {
               </div>
 
               <div style={st.sectionBox}>
-                <h3 style={{ color: '#1a3d2b', marginBottom: '8px' }}>Menu Eligible Batch 2</h3>
+                <h3 style={{ color: '#1a3d2b', marginBottom: '8px' }}>Menu Eligible Order Langsung</h3>
                 <p style={{ fontSize: '12px', color: '#888', marginTop: '-4px', marginBottom: '8px' }}>
-                  Atur di tab Menu (centang "Tersedia di Batch 2"). Daftar menu yang sudah eligible:
+                  Atur di tab Menu (centang "Tersedia di Order Langsung"). Daftar menu yang sudah eligible:
                 </p>
                 {menuItems.filter(m => m.batch2_eligible).length === 0 && <p style={{ fontSize: '13px', color: '#888' }}>Belum ada menu yang di-set untuk Batch 2.</p>}
                 {menuItems.filter(m => m.batch2_eligible).map(m => (
