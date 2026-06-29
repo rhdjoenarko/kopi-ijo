@@ -53,7 +53,7 @@ function AdminPage() {
   const [workOrderView, setWorkOrderView] = useState('po') // 'po' or 'langsung'
   const [workViewDefaultSet, setWorkViewDefaultSet] = useState(false)
   const [langsungOrders, setLangsungOrders] = useState([])
-  const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '', batch2_eligible: false })
+  const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '', batch2_eligible: false, shots_per_item: 1 })
   const [menuFormGroups, setMenuFormGroups] = useState([])
   const [editingMenu, setEditingMenu] = useState(null)
   const [ogForm, setOgForm] = useState({ name: '', required: true, choices: [{ label: '', price_addition: 0 }] })
@@ -674,14 +674,14 @@ function AdminPage() {
 
   async function resetShotUsed() {
     if (!batchSettings) return
-    if (!window.confirm('Reset stok shot terpakai ke 0?')) return
+    if (!window.confirm('Reset jumlah shot terpakai jadi 0? Sisa stok shot akan kembali penuh sesuai setting.')) return
     await supabase.from('batch_settings').update({ shot_used: 0 }).eq('id', batchSettings.id)
     fetchBatchSettings()
   }
 
   async function resetCupUsed() {
     if (!batchSettings) return
-    if (!window.confirm('Reset stok cup terpakai ke 0?')) return
+    if (!window.confirm('Reset jumlah cup terpakai jadi 0? Sisa stok cup akan kembali penuh sesuai setting.')) return
     await supabase.from('batch_settings').update({ cup_used: 0 }).eq('id', batchSettings.id)
     fetchBatchSettings()
   }
@@ -735,14 +735,14 @@ function AdminPage() {
   }
 
   function resetMenuForm() {
-    setMenuForm({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '', batch2_eligible: false })
+    setMenuForm({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '', batch2_eligible: false, shots_per_item: 1 })
     setMenuFormGroups([])
     setEditingMenu(null)
   }
 
   function startEditMenu(item) {
     setEditingMenu(item.id)
-    setMenuForm({ name: item.name, price: item.price, daily_limit: item.daily_limit || '', available_days: item.available_days || [0,1,2,3,4,5,6], active: item.active, sort_order: item.sort_order || 0, image_url: item.image_url || '', batch2_eligible: item.batch2_eligible || false })
+    setMenuForm({ name: item.name, price: item.price, daily_limit: item.daily_limit || '', available_days: item.available_days || [0,1,2,3,4,5,6], active: item.active, sort_order: item.sort_order || 0, image_url: item.image_url || '', batch2_eligible: item.batch2_eligible || false, shots_per_item: item.shots_per_item ?? 1 })
     setMenuFormGroups(item.menu_item_option_groups.map(r => r.option_group_id))
     setTab('menu')
   }
@@ -754,7 +754,7 @@ function AdminPage() {
   async function saveMenu() {
     if (!menuForm.name.trim() || !menuForm.price) { setError('Nama dan harga wajib diisi.'); return }
     setError('')
-    const payload = { name: menuForm.name.trim(), price: parseInt(menuForm.price), daily_limit: menuForm.daily_limit ? parseInt(menuForm.daily_limit) : null, available_days: menuForm.available_days, active: menuForm.active, sort_order: parseInt(menuForm.sort_order) || 0, image_url: menuForm.image_url || null, batch2_eligible: menuForm.batch2_eligible }
+    const payload = { name: menuForm.name.trim(), price: parseInt(menuForm.price), daily_limit: menuForm.daily_limit ? parseInt(menuForm.daily_limit) : null, available_days: menuForm.available_days, active: menuForm.active, sort_order: parseInt(menuForm.sort_order) || 0, image_url: menuForm.image_url || null, batch2_eligible: menuForm.batch2_eligible, shots_per_item: menuForm.batch2_eligible ? (parseInt(menuForm.shots_per_item) || 0) : 1 }
     let menuId = editingMenu
     if (editingMenu) {
       await supabase.from('menu_items').update(payload).eq('id', editingMenu)
@@ -1186,6 +1186,14 @@ function AdminPage() {
                   <input type="checkbox" checked={menuForm.batch2_eligible || false} onChange={e => setMenuForm(f => ({ ...f, batch2_eligible: e.target.checked }))} />
                   {' '}⚡ Tersedia di Order Langsung
                 </label>
+                {menuForm.batch2_eligible && (
+                  <>
+                    <label style={st.label}>Jumlah Shot Espresso per Item:</label>
+                    <input style={st.input} type="number" min="0" placeholder="1 = pakai 1 shot, 0 = tidak pakai espresso"
+                      value={menuForm.shots_per_item ?? 1}
+                      onChange={e => setMenuForm(f => ({ ...f, shots_per_item: e.target.value }))} />
+                  </>
+                )}
                 <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                   <button style={st.btn} onClick={saveMenu}>{editingMenu ? 'Update Menu' : 'Simpan Menu'}</button>
                   {editingMenu && <button style={st.btnOutline} onClick={resetMenuForm}>Batal</button>}
