@@ -51,7 +51,6 @@ function AdminPage() {
   const [dateGroups, setDateGroups] = useState([])
   const [workDateLabel, setWorkDateLabel] = useState('')
   const [workOrderView, setWorkOrderView] = useState('po') // 'po' or 'langsung'
-  const [workOrderView, setWorkOrderView] = useState('po') // 'po' or 'langsung'
   const [workViewDefaultSet, setWorkViewDefaultSet] = useState(false)
   const [langsungOrders, setLangsungOrders] = useState([])
   const [menuForm, setMenuForm] = useState({ name: '', price: '', daily_limit: '', available_days: [0,1,2,3,4,5,6], active: true, sort_order: 0, image_url: '', batch2_eligible: false })
