@@ -42,7 +42,7 @@ function AdminPage() {
   const [closedDays, setClosedDays] = useState([])
   const [closedDayForm, setClosedDayForm] = useState({ type: 'recurring', day_of_week: 1, specific_date: '', note: '' })
   const [batchSettings, setBatchSettings] = useState(null)
-  const [batchForm, setBatchForm] = useState({ is_active: false, open_hour: 8, open_minute: 30, close_hour: 17, close_minute: 0, shot_stock: 0 })
+  const [batchForm, setBatchForm] = useState({ is_active: false, open_hour: 8, open_minute: 30, close_hour: 17, close_minute: 0, shot_stock: 0, cup_stock: 0 })
   const [promos, setPromos] = useState([])
   const [promoForm, setPromoForm] = useState({ name: '', type: 'overall', discount_type: 'percent', discount_amount: '', menu_item_id: '', start_date: '', end_date: '', stackable: false, priority: 0 })
   const [editingPromo, setEditingPromo] = useState(null)
@@ -162,7 +162,7 @@ function AdminPage() {
       setBatchSettings(data)
       setBatchForm({
         is_active: data.is_active, open_hour: data.open_hour, open_minute: data.open_minute,
-        close_hour: data.close_hour, close_minute: data.close_minute, shot_stock: data.shot_stock
+        close_hour: data.close_hour, close_minute: data.close_minute, shot_stock: data.shot_stock, cup_stock: data.cup_stock
       })
     } else {
       setBatchSettings(null)
@@ -517,24 +517,35 @@ function AdminPage() {
         }
 
         let totalShotsNeeded = 0
+        let totalCupsNeeded = 0
         for (const cg of dg.customerGroups) {
           for (const it of cg.items) {
             totalShotsNeeded += computeShotsForItem(it)
+            totalCupsNeeded += it.quantity
           }
         }
 
         const today = new Date().toLocaleDateString('en-CA')
         const { data: freshBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
-        const remainingShots = freshBatch ? freshBatch.shot_stock - freshBatch.shot_used : 0
 
         if (!freshBatch) {
           setError('Order Langsung belum di-setting hari ini. Buka tab Order Langsung dulu.'); return
         }
+
+        const remainingShots = freshBatch.shot_stock - freshBatch.shot_used
+        const remainingCups = freshBatch.cup_stock - freshBatch.cup_used
+
         if (remainingShots < totalShotsNeeded) {
           setError(`Stok shot tersisa hanya ${remainingShots}, sedangkan input kamu butuh ${totalShotsNeeded} shot.`); return
         }
+        if (remainingCups < totalCupsNeeded) {
+          setError(`Stok cup tersisa hanya ${remainingCups}, sedangkan input kamu butuh ${totalCupsNeeded} cup.`); return
+        }
 
-        await supabase.from('batch_settings').update({ shot_used: freshBatch.shot_used + totalShotsNeeded }).eq('id', freshBatch.id)
+        await supabase.from('batch_settings').update({
+          shot_used: freshBatch.shot_used + totalShotsNeeded,
+          cup_used: freshBatch.cup_used + totalCupsNeeded
+        }).eq('id', freshBatch.id)
       }
 
       for (const cg of dg.customerGroups) {
@@ -641,12 +652,13 @@ function AdminPage() {
       close_hour: parseInt(batchForm.close_hour),
       close_minute: parseInt(batchForm.close_minute),
       shot_stock: parseInt(batchForm.shot_stock) || 0,
+      cup_stock: parseInt(batchForm.cup_stock) || 0,
       batch_date: today
     }
     if (batchSettings) {
       await supabase.from('batch_settings').update(payload).eq('id', batchSettings.id)
     } else {
-      await supabase.from('batch_settings').insert({ ...payload, shot_used: 0 })
+      await supabase.from('batch_settings').insert({ ...payload, shot_used: 0, cup_used: 0 })
     }
     fetchBatchSettings()
   }
@@ -664,6 +676,13 @@ function AdminPage() {
     if (!batchSettings) return
     if (!window.confirm('Reset stok shot terpakai ke 0?')) return
     await supabase.from('batch_settings').update({ shot_used: 0 }).eq('id', batchSettings.id)
+    fetchBatchSettings()
+  }
+
+  async function resetCupUsed() {
+    if (!batchSettings) return
+    if (!window.confirm('Reset stok cup terpakai ke 0?')) return
+    await supabase.from('batch_settings').update({ cup_used: 0 }).eq('id', batchSettings.id)
     fetchBatchSettings()
   }
 
@@ -1591,24 +1610,32 @@ function AdminPage() {
                     value={batchForm.close_minute} onChange={e => setBatchForm(f => ({ ...f, close_minute: e.target.value }))} />
                 </div>
 
-                <label style={st.label}>Stok Shot Espresso Hari Ini:</label>
+                <label style={st.label}>Stok Shot Espresso Hari Ini (untuk minuman kopi):</label>
                 <input style={st.input} type="number" placeholder="Misal: 20" value={batchForm.shot_stock}
                   onChange={e => setBatchForm(f => ({ ...f, shot_stock: e.target.value }))} />
 
-                <button style={st.btn} onClick={saveBatchSettings}>Simpan Setting Batch 2</button>
+                <label style={st.label}>Stok Cup Hari Ini (untuk semua minuman):</label>
+                <input style={st.input} type="number" placeholder="Misal: 25" value={batchForm.cup_stock}
+                  onChange={e => setBatchForm(f => ({ ...f, cup_stock: e.target.value }))} />
+
+                <button style={st.btn} onClick={saveBatchSettings}>Simpan Setting Order Langsung</button>
 
                 {batchSettings && (
                   <div style={{ marginTop: '16px', background: '#d4e8d8', borderRadius: '8px', padding: '12px', fontSize: '13px', color: '#1a3d2b' }}>
                     <strong>Status Sekarang:</strong><br />
                     Aktif: {batchSettings.is_active ? '🟢 Ya' : '🔴 Tidak'}<br />
                     Jam: {String(batchSettings.open_hour).padStart(2, '0')}:{String(batchSettings.open_minute).padStart(2, '0')} - {String(batchSettings.close_hour).padStart(2, '0')}:{String(batchSettings.close_minute).padStart(2, '0')}<br />
-                    Sisa Stok Shot: <strong>{batchSettings.shot_stock - batchSettings.shot_used}</strong> dari {batchSettings.shot_stock}
+                    Sisa Stok Shot: <strong>{batchSettings.shot_stock - batchSettings.shot_used}</strong> dari {batchSettings.shot_stock}<br />
+                    Sisa Stok Cup: <strong>{batchSettings.cup_stock - batchSettings.cup_used}</strong> dari {batchSettings.cup_stock}
                     <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
                       <button style={{ ...st.btnSmall, background: batchSettings.is_active ? '#c0392b' : '#2d7a4f' }} onClick={toggleBatchActive}>
                         {batchSettings.is_active ? 'Matikan Sekarang' : 'Aktifkan Sekarang'}
                       </button>
                       <button style={{ ...st.btnSmall, background: '#e67e22' }} onClick={resetShotUsed}>
-                        Reset Stok Terpakai
+                        Reset Shot Terpakai
+                      </button>
+                      <button style={{ ...st.btnSmall, background: '#9b59b6' }} onClick={resetCupUsed}>
+                        Reset Cup Terpakai
                       </button>
                     </div>
                   </div>

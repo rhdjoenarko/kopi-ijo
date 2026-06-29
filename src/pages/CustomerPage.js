@@ -68,7 +68,7 @@ function isOrderLangsungOpen(batchSettings) {
   const closeMinutes = batchSettings.close_hour * 60 + batchSettings.close_minute
   const nowMinutes = now.getHours() * 60 + now.getMinutes()
   if (nowMinutes < openMinutes || nowMinutes >= closeMinutes) return false
-  if (batchSettings.shot_stock - batchSettings.shot_used <= 0) return false
+  if (batchSettings.cup_stock - batchSettings.cup_used <= 0) return false
   return true
 }
 
@@ -377,7 +377,9 @@ function CustomerPage() {
 
     if (wantsLangsung) {
       let shotsNeeded = 0
+      let cupsNeeded = 0
       cart.forEach(c => {
+        cupsNeeded += c.quantity
         shotsNeeded += (c.item.shots_per_item || 1) * c.quantity
         Object.values(c.selectedOptions).forEach(choice => {
           if (choice?.label?.toLowerCase().includes('extra shot')) {
@@ -389,7 +391,6 @@ function CustomerPage() {
 
       const today = new Date().toLocaleDateString('en-CA')
       const { data: freshBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
-      const remainingShots = freshBatch ? freshBatch.shot_stock - freshBatch.shot_used : 0
 
       if (!freshBatch || !freshBatch.is_active) {
         setError('Order Langsung sudah tutup. Silakan pilih Pre-Order.')
@@ -397,16 +398,28 @@ function CustomerPage() {
         return
       }
 
+      const remainingShots = freshBatch.shot_stock - freshBatch.shot_used
+      const remainingCups = freshBatch.cup_stock - freshBatch.cup_used
+
+      if (remainingCups < cupsNeeded) {
+        setError(`Stok cup tersisa hanya ${remainingCups}, sedangkan order kamu butuh ${cupsNeeded} cup. Kurangi pesanan dulu ya.`)
+        setLoading(false)
+        return
+      }
+
       if (remainingShots < shotsNeeded) {
-        setError(`Stok tersisa hanya ${remainingShots} shot, sedangkan order kamu butuh ${shotsNeeded} shot. Kurangi pesanan dulu ya.`)
+        setError(`Stok shot espresso tersisa hanya ${remainingShots}, sedangkan order kamu butuh ${shotsNeeded} shot. Kurangi menu kopi-nya dulu ya.`)
         setLoading(false)
         return
       }
 
       actualBatchType = 'batch2'
       deliveryDate = today
-      await supabase.from('batch_settings').update({ shot_used: freshBatch.shot_used + shotsNeeded }).eq('id', freshBatch.id)
-      setBatchSettings({ ...freshBatch, shot_used: freshBatch.shot_used + shotsNeeded })
+      await supabase.from('batch_settings').update({
+        shot_used: freshBatch.shot_used + shotsNeeded,
+        cup_used: freshBatch.cup_used + cupsNeeded
+      }).eq('id', freshBatch.id)
+      setBatchSettings({ ...freshBatch, shot_used: freshBatch.shot_used + shotsNeeded, cup_used: freshBatch.cup_used + cupsNeeded })
     }
 
     const { finalTotal, totalDiscount } = getCartTotals()
@@ -466,11 +479,17 @@ function CustomerPage() {
   }
 
   function renderMenuList(items, mode) {
+    const remainingShots = batchSettings ? batchSettings.shot_stock - batchSettings.shot_used : 0
+    const remainingCups = batchSettings ? batchSettings.cup_stock - batchSettings.cup_used : 0
+
     return (
       <div style={{ padding: '0 16px 16px' }}>
         {items.length === 0 && <p style={{ color: '#5a5248' }}>Tidak ada menu tersedia.</p>}
         {items.map(item => {
-          const isSoldOut = item.daily_limit !== null && item.soldToday >= item.daily_limit
+          const usesShot = mode === 'langsung' && (item.shots_per_item || 1) > 0
+          const outOfShot = mode === 'langsung' && usesShot && remainingShots < (item.shots_per_item || 1)
+          const outOfCup = mode === 'langsung' && remainingCups <= 0
+          const isSoldOut = (item.daily_limit !== null && item.soldToday >= item.daily_limit) || outOfShot || outOfCup
           const itemPromos = getActiveProductPromo(item.id)
           let promoPrice = item.price
           if (itemPromos) {
@@ -491,7 +510,9 @@ function CustomerPage() {
                     </span>
                   )}
                   {isSoldOut && (
-                    <span style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(192,57,43,0.85)', color: '#fff', fontSize: '11px', padding: '3px 8px', borderRadius: '20px' }}>Habis</span>
+                    <span style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(192,57,43,0.85)', color: '#fff', fontSize: '11px', padding: '3px 8px', borderRadius: '20px' }}>
+                      {outOfShot ? 'Shot Habis' : outOfCup ? 'Cup Habis' : 'Habis'}
+                    </span>
                   )}
                 </div>
               )}
@@ -507,8 +528,10 @@ function CustomerPage() {
                     ) : (
                       <span>Rp {item.price.toLocaleString('id-ID')}</span>
                     )}
-                    {!item.image_url && isSoldOut && <span style={{ color: '#c0392b', marginLeft: '6px' }}>· Habis</span>}
-                    {!item.image_url && item.daily_limit && !isSoldOut && <span style={{ color: '#888', marginLeft: '6px' }}>· Sisa {item.daily_limit - item.soldToday}</span>}
+                    {!item.image_url && outOfShot && <span style={{ color: '#c0392b', marginLeft: '6px' }}>· Stok shot habis</span>}
+                    {!item.image_url && !outOfShot && outOfCup && <span style={{ color: '#c0392b', marginLeft: '6px' }}>· Stok cup habis</span>}
+                    {!item.image_url && !outOfShot && !outOfCup && item.daily_limit && item.soldToday >= item.daily_limit && <span style={{ color: '#c0392b', marginLeft: '6px' }}>· Habis</span>}
+                    {!item.image_url && !isSoldOut && item.daily_limit && <span style={{ color: '#888', marginLeft: '6px' }}>· Sisa {item.daily_limit - item.soldToday}</span>}
                   </div>
                 </div>
                 <button style={{ ...st.addBtn, ...(isSoldOut ? st.addBtnDisabled : {}) }}
