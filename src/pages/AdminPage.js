@@ -646,6 +646,7 @@ function AdminPage() {
   async function togglePaid(orderId, currentPaid) {
     await supabase.from('orders').update({ paid: !currentPaid, paid_at: !currentPaid ? new Date().toISOString() : null, transfer_claimed: false }).eq('id', orderId)
     fetchWorkOrders()
+    fetchLangsungOrders()
   }
 
   async function saveSettings() {
@@ -817,17 +818,19 @@ function AdminPage() {
                     const badge = getStatusBadge(entry)
                     return (
                       <div key={i} style={{ ...st.workEntry, ...(entry.batchType === 'batch2' ? { borderLeft: '4px solid #e67e22', background: '#fff8f0' } : {}) }}>
-                        <div style={st.workEntryRow}>
-                          <div>
+                        <div style={{ ...st.workEntryRow, flexWrap: 'wrap' }}>
+                          <div style={{ flex: '1 1 200px', minWidth: 0 }}>
                             {entry.batchType === 'batch2' && (
-                              <span style={{ background: '#e67e22', color: '#fff', fontSize: '10px', padding: '2px 6px', borderRadius: '10px', marginRight: '6px', fontWeight: '500' }}>
+                              <span style={{ display: 'inline-block', background: '#e67e22', color: '#fff', fontSize: '10px', padding: '2px 6px', borderRadius: '10px', marginBottom: '4px', fontWeight: '500' }}>
                                 ⚡ LANGSUNG
                               </span>
                             )}
-                            <span style={{ fontSize: '13px', fontWeight: '500', color: '#2c2c2a' }}>
-                              {entry.quantity > 1 ? `${entry.quantity}x ` : ''}{entry.customerName}
-                            </span>
-                            <span style={{ fontSize: '12px', color: '#888', marginLeft: '6px' }}>{entry.customerPhone}</span>
+                            <div>
+                              <span style={{ fontSize: '13px', fontWeight: '500', color: '#2c2c2a' }}>
+                                {entry.quantity > 1 ? `${entry.quantity}x ` : ''}{entry.customerName}
+                              </span>
+                              <span style={{ fontSize: '12px', color: '#888', marginLeft: '6px' }}>{entry.customerPhone}</span>
+                            </div>
                             {entry.options.length > 0 && (
                               <div style={st.optionTags}>
                                 {entry.options.map(opt => (
