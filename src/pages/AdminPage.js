@@ -408,8 +408,13 @@ function AdminPage() {
     setDateGroups(prev => [...prev, {
       id: Date.now(),
       date: new Date().toLocaleDateString('en-CA'),
+      orderType: 'po', // 'po' or 'langsung'
       customerGroups: []
     }])
+  }
+
+  function updateDateGroupType(groupId, orderType) {
+    setDateGroups(prev => prev.map(g => g.id === groupId ? { ...g, orderType } : g))
   }
 
   function removeDateGroup(groupId) {
@@ -497,6 +502,36 @@ function AdminPage() {
   async function submitAllOrders() {
     setError('')
     for (const dg of dateGroups) {
+      const isLangsung = dg.orderType === 'langsung'
+
+      if (isLangsung) {
+        let totalShotsNeeded = 0
+        for (const cg of dg.customerGroups) {
+          for (const it of cg.items) {
+            totalShotsNeeded += (it.item.shots_per_item || 1) * it.quantity
+            Object.values(it.selectedOptions).forEach(choice => {
+              if (choice?.label?.toLowerCase().includes('extra shot')) {
+                const match = choice.label.match(/(\d+)/)
+                if (match) totalShotsNeeded += parseInt(match[1]) * it.quantity
+              }
+            })
+          }
+        }
+
+        const today = new Date().toLocaleDateString('en-CA')
+        const { data: freshBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
+        const remainingShots = freshBatch ? freshBatch.shot_stock - freshBatch.shot_used : 0
+
+        if (!freshBatch) {
+          setError('Order Langsung belum di-setting hari ini. Buka tab Order Langsung dulu.'); return
+        }
+        if (remainingShots < totalShotsNeeded) {
+          setError(`Stok shot tersisa hanya ${remainingShots}, sedangkan input kamu butuh ${totalShotsNeeded} shot.`); return
+        }
+
+        await supabase.from('batch_settings').update({ shot_used: freshBatch.shot_used + totalShotsNeeded }).eq('id', freshBatch.id)
+      }
+
       for (const cg of dg.customerGroups) {
         if (cg.items.length === 0) continue
         let customerId = cg.customerId
@@ -523,10 +558,13 @@ function AdminPage() {
         }
         const isPaid = creditUsed >= orderTotal
 
+        const orderForDate = isLangsung ? new Date().toLocaleDateString('en-CA') : dg.date
+
         const { data: order, error: orderError } = await supabase.from('orders').insert({
           customer_id: customerId,
-          order_for_date: dg.date,
+          order_for_date: orderForDate,
           credit_used: creditUsed,
+          batch_type: isLangsung ? 'batch2' : 'po',
           voided: false,
           paid: isPaid,
           paid_at: isPaid ? new Date().toISOString() : null
@@ -551,7 +589,7 @@ function AdminPage() {
       }
     }
     setDateGroups([])
-    fetchAllUnpaid(); fetchAllCustomers(); fetchWorkOrders()
+    fetchAllUnpaid(); fetchAllCustomers(); fetchWorkOrders(); fetchLangsungOrders(); fetchBatchSettings()
     alert('Semua order berhasil dibuat.')
   }
 
@@ -1287,9 +1325,27 @@ function AdminPage() {
 
               {dateGroups.map(dg => (
                 <div key={dg.id} style={{ ...st.sectionBox, border: '1.5px solid #1a3d2b' }}>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '13px', cursor: 'pointer' }}>
+                      <input type="radio" name={`orderType-${dg.id}`} checked={dg.orderType !== 'langsung'}
+                        onChange={() => updateDateGroupType(dg.id, 'po')} />
+                      📅 Pre-Order
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '13px', cursor: 'pointer' }}>
+                      <input type="radio" name={`orderType-${dg.id}`} checked={dg.orderType === 'langsung'}
+                        onChange={() => updateDateGroupType(dg.id, 'langsung')} />
+                      ⚡ Order Langsung
+                    </label>
+                  </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                    <input style={{ ...st.input, marginBottom: 0, width: '180px' }} type="date" value={dg.date}
-                      onChange={e => updateDateGroupDate(dg.id, e.target.value)} />
+                    {dg.orderType === 'langsung' ? (
+                      <span style={{ fontSize: '13px', color: '#e67e22', fontWeight: '500' }}>
+                        Delivery: Hari Ini ({new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })})
+                      </span>
+                    ) : (
+                      <input style={{ ...st.input, marginBottom: 0, width: '180px' }} type="date" value={dg.date}
+                        onChange={e => updateDateGroupDate(dg.id, e.target.value)} />
+                    )}
                     <button style={{ ...st.btnSmall, background: '#c0392b' }} onClick={() => removeDateGroup(dg.id)}>Hapus Tanggal</button>
                   </div>
 
@@ -1327,9 +1383,11 @@ function AdminPage() {
                           if (item) addItemToCustomerGroup(dg.id, cg.id, item)
                         }}>
                           <option value="">+ Tambah menu...</option>
-                          {adminMenuFull.map(item => (
-                            <option key={item.id} value={item.id}>{item.name} - Rp {item.price.toLocaleString('id-ID')}</option>
-                          ))}
+                          {adminMenuFull
+                            .filter(item => dg.orderType !== 'langsung' || item.batch2_eligible)
+                            .map(item => (
+                              <option key={item.id} value={item.id}>{item.name} - Rp {item.price.toLocaleString('id-ID')}</option>
+                            ))}
                         </select>
                       </div>
 
