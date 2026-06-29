@@ -505,16 +505,21 @@ function AdminPage() {
       const isLangsung = dg.orderType === 'langsung'
 
       if (isLangsung) {
+        const computeShotsForItem = (it) => {
+          let shots = (it.item.shots_per_item || 1) * it.quantity
+          Object.values(it.selectedOptions).forEach(choice => {
+            if (choice?.label?.toLowerCase().includes('extra shot')) {
+              const match = choice.label.match(/(\d+)/)
+              if (match) shots += parseInt(match[1]) * it.quantity
+            }
+          })
+          return shots
+        }
+
         let totalShotsNeeded = 0
         for (const cg of dg.customerGroups) {
           for (const it of cg.items) {
-            totalShotsNeeded += (it.item.shots_per_item || 1) * it.quantity
-            Object.values(it.selectedOptions).forEach(choice => {
-              if (choice?.label?.toLowerCase().includes('extra shot')) {
-                const match = choice.label.match(/(\d+)/)
-                if (match) totalShotsNeeded += parseInt(match[1]) * it.quantity
-              }
-            })
+            totalShotsNeeded += computeShotsForItem(it)
           }
         }
 
