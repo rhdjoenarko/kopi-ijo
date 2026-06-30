@@ -486,8 +486,8 @@ function CustomerPage() {
       <div style={{ padding: '0 16px 16px' }}>
         {items.length === 0 && <p style={{ color: '#5a5248' }}>Tidak ada menu tersedia.</p>}
         {items.map(item => {
-          const usesShot = mode === 'langsung' && (item.shots_per_item || 1) > 0
-          const outOfShot = mode === 'langsung' && usesShot && remainingShots < (item.shots_per_item || 1)
+          const usesShot = mode === 'langsung' && (item.shots_per_item ?? 1) > 0
+          const outOfShot = mode === 'langsung' && usesShot && remainingShots < (item.shots_per_item ?? 1)
           const outOfCup = mode === 'langsung' && remainingCups <= 0
           const isSoldOut = (item.daily_limit !== null && item.soldToday >= item.daily_limit) || outOfShot || outOfCup
           const itemPromos = getActiveProductPromo(item.id)
