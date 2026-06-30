@@ -506,7 +506,7 @@ function AdminPage() {
 
       if (isLangsung) {
         const computeShotsForItem = (it) => {
-          let shots = (it.item.shots_per_item || 1) * it.quantity
+          let shots = (it.item.shots_per_item ?? 1) * it.quantity
           Object.values(it.selectedOptions).forEach(choice => {
             if (choice?.label?.toLowerCase().includes('extra shot')) {
               const match = choice.label.match(/(\d+)/)
@@ -1076,11 +1076,6 @@ function AdminPage() {
                                   {o.promo_discount > 0 && (
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#e67e22' }}>
                                       <span>🏷 Diskon Promo</span><span>- Rp {o.promo_discount.toLocaleString('id-ID')}</span>
-                                    </div>
-                                  )}
-                                  {o.bonus_used > 0 && (
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#e67e22' }}>
-                                      <span>🎁 Bonus dipakai</span><span>- Rp {o.bonus_used.toLocaleString('id-ID')}</span>
                                     </div>
                                   )}
                                   {o.bonus_used > 0 && (

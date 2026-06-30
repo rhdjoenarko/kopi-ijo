@@ -380,7 +380,7 @@ function CustomerPage() {
       let cupsNeeded = 0
       cart.forEach(c => {
         cupsNeeded += c.quantity
-        shotsNeeded += (c.item.shots_per_item || 1) * c.quantity
+        shotsNeeded += (c.item.shots_per_item ?? 1) * c.quantity
         Object.values(c.selectedOptions).forEach(choice => {
           if (choice?.label?.toLowerCase().includes('extra shot')) {
             const match = choice.label.match(/(\d+)/)
