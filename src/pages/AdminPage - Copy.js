@@ -304,23 +304,6 @@ function AdminPage() {
     fetchAllCustomers()
   }
 
-  async function applyCredit(orderId, customerId, sisaTagihan) {
-    const { data: cust } = await supabase.from('customers').select('credit_balance').eq('id', customerId).single()
-    const availableCredit = cust?.credit_balance || 0
-    if (availableCredit <= 0) return
-    const creditToApply = Math.min(availableCredit, sisaTagihan)
-    const { data: order } = await supabase.from('orders').select('credit_used').eq('id', orderId).single()
-    const newCreditUsed = (order?.credit_used || 0) + creditToApply
-    const isPaid = newCreditUsed >= sisaTagihan
-    await supabase.from('orders').update({
-      credit_used: newCreditUsed,
-      paid: isPaid,
-      paid_at: isPaid ? new Date().toISOString() : null
-    }).eq('id', orderId)
-    await supabase.from('customers').update({ credit_balance: availableCredit - creditToApply }).eq('id', customerId)
-    fetchAllUnpaid(); fetchAllCustomers()
-  }
-
   async function handleManualBill(customerId, phone) {
     const amount = parseInt(manualBillAmount[phone])
     if (!amount || amount <= 0) return
@@ -1113,12 +1096,6 @@ function AdminPage() {
                                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 'bold', color: statusColor, marginTop: '4px' }}>
                                     <span>Sisa Tagihan</span><span>Rp {sisaTagihan.toLocaleString('id-ID')}</span>
                                   </div>
-                                  {!o.paid && sisaTagihan > 0 && customer.credit_balance > 0 && (
-                                    <button style={{ ...st.btnSmall, background: '#1a3d2b', width: '100%', marginTop: '8px' }}
-                                      onClick={() => applyCredit(o.id, customer.id, sisaTagihan)}>
-                                      Pakai Credit (Rp {Math.min(customer.credit_balance, sisaTagihan).toLocaleString('id-ID')})
-                                    </button>
-                                  )}
                                   {!o.paid && sisaTagihan > 0 && (
                                     <>
                                       <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
