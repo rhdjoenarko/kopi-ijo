@@ -827,6 +827,7 @@ function AdminPage() {
 
   async function deleteOg(id) {
     if (!window.confirm('Hapus grup opsi ini?')) return
+    await supabase.from('order_item_options').update({ option_group_id: null }).eq('option_group_id', id)
     await supabase.from('option_groups').delete().eq('id', id)
     fetchOptionGroups()
   }
