@@ -157,7 +157,7 @@ function AdminPage() {
 
   const fetchBatchSettings = useCallback(async () => {
     const today = new Date().toLocaleDateString('en-CA')
-    const { data } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
+    const { data } = await supabase.from('batch_settings').select('*').eq('batch_date', today).maybeSingle()
     if (data) {
       setBatchSettings(data)
       setBatchForm({
@@ -543,7 +543,7 @@ function AdminPage() {
         }
 
         const today = new Date().toLocaleDateString('en-CA')
-        const { data: freshBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
+        const { data: freshBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).maybeSingle()
 
         if (!freshBatch) {
           setError('Order Langsung belum di-setting hari ini. Buka tab Order Langsung dulu.'); return

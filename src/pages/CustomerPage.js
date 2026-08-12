@@ -112,7 +112,7 @@ function CustomerPage() {
         supabase.from('payment_accounts').select('*').eq('active', true).order('sort_order'),
         supabase.from('closed_days').select('*'),
         supabase.from('promos').select('*').eq('active', true).order('priority'),
-        supabase.from('batch_settings').select('*').eq('batch_date', today).single()
+        supabase.from('batch_settings').select('*').eq('batch_date', today).maybeSingle()
       ])
       if (batchData) setBatchSettings(batchData)
       if (paData) setPaymentAccounts(paData)
@@ -390,7 +390,7 @@ function CustomerPage() {
       })
 
       const today = new Date().toLocaleDateString('en-CA')
-      const { data: freshBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).single()
+      const { data: freshBatch } = await supabase.from('batch_settings').select('*').eq('batch_date', today).maybeSingle()
 
       if (!freshBatch || !freshBatch.is_active) {
         setError('Order Langsung sudah tutup. Silakan pilih Pre-Order.')
